@@ -277,11 +277,6 @@
   (define flag-TF (expt 2 8))
   (define flag-AC (expt 2 18))
 
-  (define flag-idx-ZF 6)
-  (define flag-idx-SF 7)
-  (define flag-idx-OF 11)
-
-
   ;; "Identification of Earlier IA-32 Processors" in IA32 SDM Vol 1.
   ;; Should match an 80386.
   (define flags-never-set (bitwise-ior (expt 2 21) ;no CPUID
@@ -684,6 +679,7 @@
       (else (cgand expr #xffffffff))))
 
   (define (cgl-arithmetic result result:u eos operator t0 t1)
+    ;; TODO: Check the corner cases.
     (define (cgsub-overflow? a b result result-width)
       ;; If the operation is done with an n bit operand size, then bit
       ;; n-1 will be set if there was an overflow. The result may
@@ -729,6 +725,18 @@
          (fl-PF (lambda () ,(cg-PF result)))
          (fl-CF (lambda () ,(cg-CF)))))
 
+      ((ADC)
+       `((t0 ,t0)
+         (t1 ,t1)
+         (tmp ,(cg+ (cg+ 't0 't1) '(fl-CF))) ;CF is bit 0
+         (,result ,(cg-trunc 'tmp eos))
+         (fl-OF (lambda () (if ,(cgadd-overflow? 't0 't1 result eos) ,flag-OF 0)))
+         (fl-SF (lambda () ,(cg-SF result)))
+         (fl-ZF (lambda () ,(cg-ZF result)))
+         (fl-AF (lambda () ,(cg-AF 't0 't1)))
+         (fl-PF (lambda () ,(cg-PF result)))
+         (fl-CF (lambda () ,(cg-CF)))))
+
       ((AND)
        `((t0 ,t0)
          (t1 ,t1)
@@ -752,6 +760,30 @@
          (fl-AF (lambda () ,(cg-AF 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))))
 
+      ((OR)
+       `((t0 ,t0)
+         (t1 ,t1)
+         (tmp ,(cgior 't0 't1))
+         (,result ,(cg-trunc 'tmp eos))
+         (fl-OF (lambda () 0))
+         (fl-SF (lambda () ,(cg-SF result)))
+         (fl-ZF (lambda () ,(cg-ZF result)))
+         (fl-AF (lambda () 0))          ;undefined
+         (fl-PF (lambda () ,(cg-PF result)))
+         (fl-CF (lambda () 0))))
+
+      ((SBB)
+       `((t0 ,t0)
+         (t1 ,t1)
+         (tmp ,(cg- (cg- 't0 't1) '(fl-CF))) ;CF is bit 0
+         (,result ,(cg-trunc 'tmp eos))
+         (fl-OF (lambda () (if ,(cgsub-overflow? 't0 't1 result eos) ,flag-OF 0)))
+         (fl-SF (lambda () ,(cg-SF result)))
+         (fl-ZF (lambda () ,(cg-ZF result)))
+         (fl-AF (lambda () ,(cg-AF 't0 't1)))
+         (fl-PF (lambda () ,(cg-PF result)))
+         (fl-CF (lambda () ,(cg-CF)))))
+
       ((SUB)
        `((t0 ,t0)
          (t1 ,t1)
@@ -762,7 +794,7 @@
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () ,(cg-AF 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))
-         (fl-CF (lambda () (if ,(cgbit-set? 'tmp eos) ,flag-CF 0)))))
+         (fl-CF (lambda () ,(cg-CF)))))
 
       ((XOR)
        `((tmp ,(cgxor t0 t1))
@@ -1048,16 +1080,13 @@
              ;; Normal opcodes.
              ((#x00 #x01 #x02 #x03 #x04 #x05)
               (emit (cg-arithmetic-group op 'ADD ip cs dseg sseg eos eas continue)))
-             ((#x06)
-              ;; push *ES
+             ((#x06)                    ; push *ES
               (emit (cg-push 16 '(fxarithmetic-shift-right es 4) (continue merge ip))))
-             ((#x07)
-              ;; pop *ES
+             ((#x07)                    ; pop *ES
               (emit (cg-pop 16 'tmp `(let ((es ,(cgasl 'tmp 4))) ,(continue merge ip)))))
              ((#x08 #x09 #x0A #x0B #x0C #x0D)
               (emit (cg-arithmetic-group op 'OR ip cs dseg sseg eos eas continue)))
-             ((#x0E)
-              ;; push *CS
+             ((#x0E)                    ; push *CS
               (emit (cg-push 16 '(fxarithmetic-shift-right cs 4) (continue merge ip))))
 
              ((#x0F)
@@ -1071,25 +1100,36 @@
 
              ((#x10 #x11 #x12 #x13 #x14 #x15)
               (emit (cg-arithmetic-group op 'ADC ip cs dseg sseg eos eas continue)))
-             ((#x16)
-              ;; push *SS
+             ((#x16)                    ; push *SS
               (emit (cg-push 16 '(fxarithmetic-shift-right ss 4) (continue merge ip))))
+             ((#x17)                    ; pop *SS
+              (emit (cg-pop 16 'tmp `(let ((ss ,(cgasl 'tmp 4))) ,(continue merge ip)))))
              ((#x18 #x19 #x1A #x1B #x1C #x1D)
               (emit (cg-arithmetic-group op 'SBB ip cs dseg sseg eos eas continue)))
-             ((#x1E)
-              ;; push *DS
+             ((#x1E)                    ; push *DS
               (emit (cg-push 16 '(fxarithmetic-shift-right ds 4) (continue merge ip))))
-             ((#x1F)
-              ;; pop *DS
+             ((#x1F)                    ; pop *DS
               (emit (cg-pop 16 'tmp `(let ((ds ,(cgasl 'tmp 4))) ,(continue merge ip)))))
              ((#x20 #x21 #x22 #x23 #x24 #x25)
               (emit (cg-arithmetic-group op 'AND ip cs dseg sseg eos eas continue)))
+             #;((#x27)
+                ;; daa
+                )
              ((#x28 #x29 #x2A #x2B #x2C #x2D)
               (emit (cg-arithmetic-group op 'SUB ip cs dseg sseg eos eas continue)))
+             #;((#x2F)
+                ;; das
+                )
              ((#x30 #x31 #x32 #x33 #x34 #x35)
               (emit (cg-arithmetic-group op 'XOR ip cs dseg sseg eos eas continue)))
+             #;((#x37)
+                ;; aaa
+                )
              ((#x38 #x39 #x3A #x3B #x3C #x3D)
               (emit (cg-arithmetic-group op 'CMP ip cs dseg sseg eos eas continue)))
+             #;((#x3F)
+                ;; aas
+                )
              ((#x40 #x41 #x42 #x43 #x44 #x45 #x46 #x47 #x48 #x49 #x4A #x4B #x4C #x4D #x4E #x4F)
               ;; inc/dec *rAX/r8 ... *rDI/r15
               (let* ((regno (fxand op #x7))
@@ -1131,26 +1171,23 @@
                                                imm)
                              ,@(case operator
                                  ((TEST CMP) '())
-                                 (else (cgl-reg-set modr/m eos 'result))))
+                                 (else (cgl-r/m-set store location eos 'result))))
                         ,(continue #t ip)))))))
-             ((#x88 #x89)
-              ;; mov Eb Gb, mov Ev Gv
+             ((#x88 #x89)               ; mov Eb Gb, mov Ev Gv
               (let ((eos (if (eqv? op #x88) 8 eos)))
                 (with-r/m-operand ((ip store location modr/m)
                                    (cs ip dseg sseg eas))
                   (emit
                    `(let* (,@(cgl-r/m-set store location eos (cg-reg-ref modr/m eos)))
                       ,(continue merge ip))))))
-             ((#x8A #x8B)
-              ;; mov Gb Eb, mov Gv Ev
+             ((#x8A #x8B)               ; mov Gb Eb, mov Gv Ev
               (let ((eos (if (eqv? op #x8A) 8 eos)))
                 (with-r/m-operand ((ip store location modr/m)
                                    (cs ip dseg sseg eas))
                   (emit
                    `(let* (,@(cgl-reg-set modr/m eos (cg-r/m-ref store location eos)))
                       ,(continue merge ip))))))
-             ((#x8E)
-              ;; mov Sw Ew
+             ((#x8E)                    ; mov Sw Ew
               (with-r/m-operand ((ip store location modr/m)
                                  (cs ip dseg sseg eas))
                 (let ((reg (or (vector-ref '#(es #f ss ds fs gs #f #f)
@@ -1160,7 +1197,9 @@
                   (emit
                    `(let* ((,reg (fx* ,(cg-r/m-ref store location 16) 16)))
                       ,(continue merge ip))))))
-             ((#x90 #x91 #x92 #x93 #x94 #x95 #x96 #x97)
+             ((#x90)                    ; nop
+              (emit (continue merge ip)))
+             ((#;#x90 #x91 #x92 #x93 #x94 #x95 #x96 #x97)
               ;; xchg *rCX/r8...*rDI/r15 *rAX
               (let ((regno (fxand op #x7)))
                 (emit
@@ -1220,8 +1259,7 @@
                   (emit
                    `(let* (,@(cgl-register-update (fxand op #x7) eos imm))
                       ,(continue merge ip))))))
-             ((#xC4 #xC5)
-              ;; les Gz Mp, lds Gz Mp
+             ((#xC4 #xC5)               ; les Gz Mp, lds Gz Mp
               (with-r/m-operand ((ip store location modr/m)
                                  (cs ip dseg sseg eas))
                 (assert (eq? store 'mem)) ;TODO: #UD
@@ -1241,16 +1279,14 @@
                                    (cs ip dseg sseg eas))
                   (with-instruction-immediate* ((imm <- cs ip eos))
                     (case (ModR/M-reg modr/m)
-                      ((#x0)
-                       ;; mov Eb Ib, mov Ev Iz
+                      ((#x0)            ; mov Eb Ib, mov Ev Iz
                        (emit
                         `(let* (,@(cgl-r/m-set store location eos imm))
                            ,(continue merge ip))))
                       (else
                        (error 'run "TODO: raise #UD in Group 11" (hex op)
                               (hex modr/m))))))))
-             ((#xCD)
-              ;; int Ib
+             ((#xCD)                 ; int Ib
               (let ((idt 0))            ;real mode interrupt vector table
                 (with-instruction-u8* ((vec <- cs ip))
                   (emit
@@ -1267,12 +1303,10 @@
                                                                        flag-TF
                                                                        flag-AC))))))
                                 ,(return merge 'off)))))))
-             ((#xE8)
-              ;; call Jz
+             ((#xE8)                    ; call Jz
               (with-instruction-immediate-sx* ((disp <- cs ip eos))
                 (emit (cg-push 16 ip (return merge (fwand #xffff (fw+ ip disp)))))))
-             ((#xEB)
-              ;; jmp Jb
+             ((#xEB)                    ; jmp Jb
               (with-instruction-s8* ((disp <- cs ip))
                 (emit (return merge (fwand #xffff (fw+ ip disp))))))
              ((#xF1)
@@ -1280,20 +1314,33 @@
               ;; this would be equivalent to INT 1, except it doesn't
               ;; count as a software interrupt.
               (emit (return merge #f)))
-             ((#xFA)
-              ;; cli
+             ((#xF5)                    ; cmc
+              (emit
+               `(let* ((fl-CF (lambda () (fxxor (fl-CF) ,flag-CF))))
+                  ,(continue merge ip))))
+             ((#xF8)                    ; clc
+              (emit
+               `(let* ((fl-CF (lambda () 0)))
+                  ,(continue merge ip))))
+             ((#xF9)                    ; stc
+              (emit
+               `(let* ((fl-CF (lambda () ,flag-CF)))
+                  ,(continue merge ip))))
+             ((#xFA)                    ; cli
               (emit
                `(let* ((fl (lambda () ,(cgand '(fl) (fxnot flag-IF)))))
                   ,(continue merge ip))))
-             ((#xFB)
-              ;; sti
+             ((#xFB)                    ; sti
               (emit
                `(let* ((fl (lambda () ,(cgior '(fl) flag-IF))))
                   ,(continue merge ip))))
-             ((#xFC)
-              ;; cld
+             ((#xFC)                    ; cld
               (emit
                `(let* ((fl (lambda () ,(cgand '(fl) (fxnot flag-DF)))))
+                  ,(continue merge ip))))
+             ((#xFD)                    ; std
+              (emit
+               `(let* ((fl (lambda () ,(cgior '(fl) flag-DF))))
                   ,(continue merge ip))))
              (else
               ;; TODO: #UD
