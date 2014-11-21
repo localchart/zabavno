@@ -678,6 +678,12 @@
       ((8) (cgand expr #xff))
       (else (cgand expr #xffffffff))))
 
+  (define GROUP-1 '#(ADD OR ADC SBB AND SUB XOR CMP))
+
+  (define GROUP-2 '#(ROL ROR RCL RCR SHL SHR SHL SAR))
+
+  (define GROUP-3 '#(TEST TEST NOT NEG MUL IMUL DIV IDIV))
+
   (define (cgl-arithmetic result result:u eos operator t0 t1)
     ;; TODO: Check the corner cases.
     (define (cgsub-overflow? a b result result-width)
@@ -783,6 +789,25 @@
          (fl-AF (lambda () ,(cg-AF 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))
          (fl-CF (lambda () ,(cg-CF)))))
+
+      ((SHR)
+       `((t0 ,t0)
+         (t1 ,(cgand t1 #x11111))
+         (tmp ,(cgasr 't0 't1))
+         (,result ,(cg-trunc 'tmp eos))
+         (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
+                                 ((and #;(eqv? t1 1)
+                                       ,(cgbit-set? 't0 (fx- eos 1)))
+                                  ,flag-OF)
+                                 (else 0))))
+         (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result))))
+         (fl-ZF (lambda () (if (eqv? t1 0) (fl-ZF) ,(cg-ZF result))))
+         (fl-AF (lambda () (if (eqv? t1 0) (fl-AF) 0)))
+         (fl-PF (lambda () (if (eqv? t1 0) (fl-PF) ,(cg-PF result))))
+         (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
+                               (if ,(cgbit-set? 't0 (cg- 't1 1))
+                                   ,flag-CF
+                                   0))))))
 
       ((SUB)
        `((t0 ,t0)
@@ -1163,8 +1188,7 @@
                                  (cs ip dseg sseg eas))
                 (with-instruction-s8* ((imm <- cs ip))
                   (let ((imm (trunc imm eos))
-                        (operator (vector-ref '#(ADD OR ADC SBB AND SUB XOR CMP)
-                                              (ModR/M-reg modr/m))))
+                        (operator (vector-ref GROUP-1 (ModR/M-reg modr/m))))
                     (emit
                      `(let* (,@(cgl-arithmetic 'result #f eos operator
                                                (cg-r/m-ref store location eos)
@@ -1259,6 +1283,19 @@
                   (emit
                    `(let* (,@(cgl-register-update (fxand op #x7) eos imm))
                       ,(continue merge ip))))))
+             ((#xC0 #xC1)
+              ;; Shift Group 2. Eb Ib, Ev Ib.
+              (let ((eos (if (eqv? op #xC0) 8 eos)))
+                (with-r/m-operand ((ip store location modr/m)
+                                   (cs ip dseg sseg eas))
+                  (with-instruction-u8* ((imm <- cs ip))
+                    (let ((operator (vector-ref GROUP-2 (ModR/M-reg modr/m))))
+                      (emit
+                       `(let* (,@(cgl-arithmetic 'result #f eos operator
+                                                 (cg-r/m-ref store location eos)
+                                                 imm)
+                               ,@(cgl-r/m-set store location eos 'result))
+                          ,(continue #t ip))))))))
              ((#xC4 #xC5)               ; les Gz Mp, lds Gz Mp
               (with-r/m-operand ((ip store location modr/m)
                                  (cs ip dseg sseg eas))
@@ -1303,6 +1340,19 @@
                                                                        flag-TF
                                                                        flag-AC))))))
                                 ,(return merge 'off)))))))
+             ((#xD0 #xD1 #xD2 #xD3)
+              ;; Shift Group 2. Eb 1, Ev 1, Eb *CL, Ev *CL.
+              (let ((eos (if (fxeven? op) 8 eos)))
+                (with-r/m-operand ((ip store location modr/m)
+                                   (cs ip dseg sseg eas))
+                  (let ((imm (if (fx<? op #xD2) 1 (cgand 'CX #xff)))
+                        (operator (vector-ref GROUP-2 (ModR/M-reg modr/m))))
+                    (emit
+                     `(let* (,@(cgl-arithmetic 'result #f eos operator
+                                               (cg-r/m-ref store location eos)
+                                               imm)
+                             ,@(cgl-r/m-set store location eos 'result))
+                        ,(continue #t ip)))))))
              ((#xE8)                    ; call Jz
               (with-instruction-immediate-sx* ((disp <- cs ip eos))
                 (emit (cg-push 16 ip (return merge (fwand #xffff (fw+ ip disp)))))))
