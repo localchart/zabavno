@@ -54,7 +54,11 @@
 
           with-machine
           current-machine
-          copy-to-memory copy-from-memory)
+          copy-to-memory copy-from-memory
+
+          ;; Flag bits.
+          flag-OF flag-SF flag-ZF flag-AF flag-PF flag-CF
+          flag-DF flag-IF flag-TF flag-AC)
   (import (rnrs)
           (rnrs eval))
 
@@ -1363,19 +1367,21 @@
               ;; icebp, In-Circuit Emulator BreakPoint. Exit. Normally
               ;; this would be equivalent to INT 1, except it doesn't
               ;; count as a software interrupt.
-              (emit (return merge #f)))
+              (if (not first?)
+                  (emit (return merge start-ip))
+                  (emit (return merge #f))))
              ((#xF5)                    ; cmc
               (emit
                `(let* ((fl-CF (lambda () (fxxor (fl-CF) ,flag-CF))))
-                  ,(continue merge ip))))
+                  ,(continue #t ip))))
              ((#xF8)                    ; clc
               (emit
                `(let* ((fl-CF (lambda () 0)))
-                  ,(continue merge ip))))
+                  ,(continue #t ip))))
              ((#xF9)                    ; stc
               (emit
                `(let* ((fl-CF (lambda () ,flag-CF)))
-                  ,(continue merge ip))))
+                  ,(continue #t ip))))
              ((#xFA)                    ; cli
               (emit
                `(let* ((fl (lambda () ,(cgand '(fl) (fxnot flag-IF)))))
@@ -1435,7 +1441,7 @@
   (define (machine-run)
     (define M *current-machine*)
     (define debug (machine-debug M))
-    (define trace (and debug #f))
+    (define trace (and debug #f))       ;TODO: use flag-TF
     ;; TODO: Very important: invalidation of this translation cache.
     ;; And that might require using something other than a hashtable.
     (define translations (make-eqv-hashtable))
@@ -1462,17 +1468,17 @@
                (idt 0))
       (when debug
         (print)
-        (print "AX: " (hex AX 4) "  BX: " (hex BX 4)
-               "  CX: " (hex CX 4) "  DX: " (hex DX 4)
-               "  SP: " (hex SP 4) "  BP: " (hex BP 4)
-               "  SI: " (hex SI 4) "  DI: " (hex DI 4))
-        (print* "DS: " (hex (segment-selector ds) 4)
-                "  ES: " (hex (segment-selector es) 4)
-                "  FS: " (hex (segment-selector fs) 4)
-                "  GS: " (hex (segment-selector gs) 4)
-                "  SS: " (hex (segment-selector ss) 4)
-                "  CS: " (hex (segment-selector cs) 4)
-                "  IP: " (hex ip 4)
+        (print "; AX=" (hex AX 4) "  BX=" (hex BX 4)
+               "  CX=" (hex CX 4) "  DX=" (hex DX 4)
+               "  SP=" (hex SP 4) "  BP=" (hex BP 4)
+               "  SI=" (hex SI 4) "  DI=" (hex DI 4))
+        (print* "; DS=" (hex (segment-selector ds) 4)
+                "  ES=" (hex (segment-selector es) 4)
+                "  FS=" (hex (segment-selector fs) 4)
+                "  GS=" (hex (segment-selector gs) 4)
+                "  SS=" (hex (segment-selector ss) 4)
+                "  CS=" (hex (segment-selector cs) 4)
+                "  IP=" (hex ip 4)
                 "  ")
         (print-flags fl)
         (newline)
@@ -1512,7 +1518,7 @@
                  (machine-DS-set! M (segment-selector ds^))
                  (machine-FS-set! M (segment-selector fs^))
                  (machine-GS-set! M (segment-selector gs^))
-                 (machine-IP-set! M ip^)
+                 (machine-IP-set! M ip)
                  (machine-FLAGS-set! M fl^)))))))
 
   )
