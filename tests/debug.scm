@@ -117,9 +117,12 @@
 ;; Reads the flags register (instead of trying to decipher debug's
 ;; syntax).
 (define (get-flags p)
-  (send-program p '((pushfw)
+  (send-program p '((push ax)
+                    (pushfw)
                     (pop ax)))
-  (let ((m (trace p #x100 2)))
+  (let ((m (trace p #x100 3)))
+    (send-program p '((pop ax)))
+    (trace p #x100 1)
     (machine-AX m)))
 
 (define (exit-debug p)
@@ -206,7 +209,7 @@
                          (let ((rz (getter mz))
                                (rd (getter md)))
                            (unless (= rz rd)
-                             (format #t "Register ~a differs. #x~x != #x~a.~%" reg rz rd))
+                             (format #t "Register ~a differs. #x~x != #x~x.~%" reg rz rd))
                            (eqv? rz rd)))
                        regs reg-getters))
              (same-flags (= fz fd)))
@@ -249,6 +252,16 @@
 
  ;; '((mov ax #b10000000)
  ;;   (shr ax 1))
+
+ ;; PUSH, POP
+ '((push #x100) (pop ax))
+ '((push #x-10) (pop di))
+
+ ;; Group 1.
+ '((xor bx bx) (add bl 1))              ;Eb Ib
+ '((xor bx bx) (add bx 1))              ;Ev Iz
+ '((xor bx bx) (add ebx 1))             ;Ev Iz
+ '((xor bx bx) (add bx -1))             ;Ev IbS
 
  ;; CLC, STC, CMC
  '((clc))

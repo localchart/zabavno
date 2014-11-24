@@ -1176,6 +1176,12 @@
               ;; pop *rAX/r8 ... *rDI/r15
               (let ((reg (vector-ref reg-names (fxand op #x7))))
                 (emit (cg-pop eos reg (continue merge ip)))))
+             ((#x68)                    ;push Iz
+              (with-instruction-immediate* ((imm <- cs ip eos))
+                (emit (cg-push eos imm (continue merge ip)))))
+             ((#x6A)                    ;push IbS
+              (with-instruction-s8* ((imm <- cs ip))
+                (emit (cg-push eos imm (continue merge ip)))))
              ((#x70 #x71 #x72 #x73 #x74 #x75 #x76 #x77 #x78 #x79 #x7A #x7B #x7C #x7D #x7E #x7F)
               ;; Jcc Jb
               (with-instruction-s8* ((disp <- cs ip))
@@ -1186,21 +1192,24 @@
                       (if ,(cg-test-cc (fxand op #b1111))
                           ,(return #f (cgand #xffff (cg+ ip disp)))
                           ,(return #f ip)))))))
-             ((#x83)
-              ;; Group 1. Ev IbS operands.
-              (with-r/m-operand ((ip store location modr/m)
-                                 (cs ip dseg sseg eas))
-                (with-instruction-s8* ((imm <- cs ip))
-                  (let ((imm (trunc imm eos))
-                        (operator (vector-ref GROUP-1 (ModR/M-reg modr/m))))
-                    (emit
-                     `(let* (,@(cgl-arithmetic 'result #f eos operator
-                                               (cg-r/m-ref store location eos)
-                                               imm)
-                             ,@(case operator
-                                 ((TEST CMP) '())
-                                 (else (cgl-r/m-set store location eos 'result))))
-                        ,(continue #t ip)))))))
+             ((#x80 #x81 #x82 #x83)
+              ;; Group 1. Eb Ib, Ev Iz, Eb Ib, Ev IbS.
+              (let ((eos (if (fxeven? op) 8 eos))
+                    (immsize (if (eqv? op #x81) eos 8)))
+                (with-r/m-operand ((ip store location modr/m)
+                                   (cs ip dseg sseg eas))
+                  (with-instruction-immediate* ((imm <- cs ip immsize))
+                    (let* ((imm (if (eqv? op #x83) (sign-extend imm 8) imm))
+                           (imm (trunc imm eos))
+                           (operator (vector-ref GROUP-1 (ModR/M-reg modr/m))))
+                      (emit
+                       `(let* (,@(cgl-arithmetic 'result #f eos operator
+                                                 (cg-r/m-ref store location eos)
+                                                 imm)
+                               ,@(case operator
+                                   ((TEST CMP) '())
+                                   (else (cgl-r/m-set store location eos 'result))))
+                          ,(continue #t ip))))))))
              ((#x88 #x89)               ; mov Eb Gb, mov Ev Gv
               (let ((eos (if (eqv? op #x88) 8 eos)))
                 (with-r/m-operand ((ip store location modr/m)
@@ -1327,6 +1336,12 @@
                       (else
                        (error 'run "TODO: raise #UD in Group 11" (hex op)
                               (hex modr/m))))))))
+             ((#xCB)                    ;retf
+              (emit (cg-pop eos 'off
+                            (cg-pop eos 'seg
+                                    `(let ((cs ,(cgasl (cgand 'seg #xffff) 4))
+                                           (ip ,(if (eqv? eos 32) 'off (cgand 'off #xffff))))
+                                       ,(return merge 'ip))))))
              ((#xCD)                 ; int Ib
               (let ((idt 0))            ;real mode interrupt vector table
                 (with-instruction-u8* ((vec <- cs ip))
