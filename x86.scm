@@ -1122,6 +1122,16 @@
               ;; Two-byte opcodes.
               (with-instruction-u8* ((op1 <- cs ip))
                 (case op1
+                  ((#x80 #x81 #x82 #x83 #x84 #x85 #x86 #x87 #x88 #x89 #x8A #x8B #x8C #x8D #x8E #x8F)
+                   ;; Jcc Jz
+                   (with-instruction-immediate-sx* ((disp <- cs ip eos))
+                     (emit
+                      `(let* (,@(cgl-merge-fl merge)) ;update fl early
+                         (let* ((fl^ (fl))   ;FIXME: clean up. Force one point of fl evaluation.
+                                (fl (lambda () fl^)))
+                           (if ,(cg-test-cc (fxand op1 #b1111))
+                               ,(return #f (cgand #xffff (cg+ ip disp)))
+                               ,(return #f ip)))))))
                   (else
                    (if (not first?)
                        (emit (return merge start-ip))
@@ -1372,6 +1382,23 @@
                                                imm)
                              ,@(cgl-r/m-set store location eos 'result))
                         ,(continue #t ip)))))))
+             ((#xE0 #xE1 #xE2)          ; loopnz Jb, loopz Jb, loop Jb
+              (with-instruction-s8* ((disp <- cs ip))
+                ;; eas determines if CX or ECX is used.
+                (emit
+                 `(let* ((count ,(cg-trunc (cg- (cg-register-ref idx-CX eas) 1) eas))
+                         ,@(cgl-register-update idx-CX eas 'count))
+                    (let* (,@(cgl-merge-fl merge) ;update fl early
+                           (fl^ (fl))   ;FIXME: clean up. Force one point of fl evaluation.
+                           (fl (lambda () fl^)))
+                      (cond ((and (not (eqv? count 0))
+                                  ,(case op
+                                     ((#xE0) '(eqv? (fl-ZF) 0)) ;loopnz
+                                     ((#xE1) '(not (eqv? (fl-ZF) 0))) ;loopz
+                                     (else #t))) ;loop
+                             ,(return #f (cgand #xffff (cg+ ip disp))))
+                            (else
+                             ,(return #f ip))))))))
              ((#xE8)                    ; call Jz
               (with-instruction-immediate-sx* ((disp <- cs ip eos))
                 (emit (cg-push 16 ip (return merge (fwand #xffff (fw+ ip disp)))))))
