@@ -1234,15 +1234,19 @@
                   (emit
                    `(let* (,@(cgl-reg-set modr/m eos (cg-r/m-ref store location eos)))
                       ,(continue merge ip))))))
-             ((#x8E)                    ; mov Sw Ew
-              (with-r/m-operand ((ip store location modr/m)
-                                 (cs ip dseg sseg eas))
-                (let ((reg (or (vector-ref '#(es #f ss ds fs gs #f #f)
-                                           (ModR/M-reg modr/m))
-                               (error 'generate-translation
-                                      "TODO: raise #UD in mov Sw Ew"))))
+             ((#x8C)                    ; mov Ev Sw
+              (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                (let ((src (or (vector-ref '#(es cs ss ds fs gs #f #f) (ModR/M-reg modr/m))
+                               (error 'generate-translation "TODO: raise #UD in mov Ev Sw"))))
                   (emit
-                   `(let* ((,reg (fx* ,(cg-r/m-ref store location 16) 16)))
+                   `(let* (,@(cgl-r/m-set store location eos (cgasr src 4)))
+                      ,(continue merge ip))))))
+             ((#x8E)                    ; mov Sw Ew
+              (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                (let ((reg (or (vector-ref '#(es #f ss ds fs gs #f #f) (ModR/M-reg modr/m))
+                               (error 'generate-translation "TODO: raise #UD in mov Sw Ew"))))
+                  (emit
+                   `(let* ((,reg ,(cgasl (cg-r/m-ref store location 16) 4)))
                       ,(continue merge ip))))))
              ((#x90)                    ; nop
               (emit (continue merge ip)))
@@ -1402,6 +1406,13 @@
              ((#xE8)                    ; call Jz
               (with-instruction-immediate-sx* ((disp <- cs ip eos))
                 (emit (cg-push 16 ip (return merge (fwand #xffff (fw+ ip disp)))))))
+             ((#xEA)                    ; jmpf Ap
+              (with-instruction-immediate* ((off <- cs ip eos)
+                                            (seg <- cs ip 16))
+                (emit
+                 `(let ((cs ,(fxasl seg 4))
+                        (ip ,off))
+                    ,(return merge 'ip)))))
              ((#xEB)                    ; jmp Jb
               (with-instruction-s8* ((disp <- cs ip))
                 (emit (return merge (fwand #xffff (fw+ ip disp))))))
@@ -1483,7 +1494,7 @@
   (define (machine-run)
     (define M *current-machine*)
     (define debug (machine-debug M))
-    (define trace (and debug #f))       ;TODO: use flag-TF
+    (define trace (and debug #f))
     ;; TODO: Very important: invalidation of this translation cache.
     ;; And that might require using something other than a hashtable.
     (define translations (make-eqv-hashtable))

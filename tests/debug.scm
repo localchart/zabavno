@@ -253,6 +253,10 @@
  ;; '((mov ax #b10000000)
  ;;   (shr ax 1))
 
+ ;; MOV with segment registers
+ '((xor ax ax) (mov ax cs))
+ '((mov ax #x700) (mov es ax))
+
  ;; PUSH, POP
  '((push #x100) (pop ax))
  '((push #x-10) (pop di))
