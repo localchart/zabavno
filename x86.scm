@@ -2,7 +2,7 @@
 ;; Copyright © 2014 Göran Weinholt <goran@weinholt.se>
 
 ;; Permission is hereby granted, free of charge, to any person obtaining a
-;; copy of this software and associated documentation files (the \"Software\"),
+;; copy of this software and associated documentation files (the "Software"),
 ;; to deal in the Software without restriction, including without limitation
 ;; the rights to use, copy, modify, merge, publish, distribute, sublicense,
 ;; and/or sell copies of the Software, and to permit persons to whom the
@@ -118,7 +118,8 @@
             (mutable GS)
             ;; Other stuff
             (mutable IP)
-            (mutable FLAGS))
+            (mutable FLAGS)
+            (immutable translations))
     (protocol
      (lambda (p)
        (lambda ()
@@ -134,7 +135,8 @@
             ;; Segment registers
             0 0 0 0 0 0
             ;; Other stuff
-            0 (fxior flags-always-set flag-IF))))))
+            0 (fxior flags-always-set flag-IF)
+            (make-eqv-hashtable))))))
 
   (define *current-machine*)
   (define RAM)
@@ -1135,7 +1137,7 @@
                   (else
                    (if (not first?)
                        (emit (return merge start-ip))
-                       (error 'generate-translation "Can't do it, captain!" cs ip))))))
+                       (error 'generate-translation "Unimplemented instruction" cs ip op op1))))))
 
              ((#x10 #x11 #x12 #x13 #x14 #x15)
               (emit (cg-arithmetic-group op 'ADC ip cs dseg sseg eos eas continue)))
@@ -1455,7 +1457,7 @@
               ;; TODO: #UD
               (if (not first?)
                   (emit (return merge start-ip))
-                  (error 'generate-translation "Can't do it, captain!" cs ip)))))))))
+                  (error 'generate-translation "Unimplemented instruction" cs ip op)))))))))
 
   (define (generate-translation! translations cs ip debug instruction-limit)
     (let* ((trans (generate-translation cs ip debug instruction-limit))
@@ -1497,7 +1499,7 @@
     (define trace (and debug #f))
     ;; TODO: Very important: invalidation of this translation cache.
     ;; And that might require using something other than a hashtable.
-    (define translations (make-eqv-hashtable))
+    (define translations (machine-translations M))
 
     (let loop ((fl (fxand (fxior (machine-FLAGS M)
                                  flags-always-set)
