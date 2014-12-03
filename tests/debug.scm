@@ -253,6 +253,10 @@
  ;; '((mov ax #b10000000)
  ;;   (shr ax 1))
 
+ ;; LEA
+ ;; '((mov si #x1) (mov bp #x1000) (lea ax (mem+ si bp)))
+ ;; '((mov si #x1) (mov bp #x1000) (lea si (mem+ si bp)))
+
  ;; MOV with segment registers
  '((xor ax ax) (mov ax cs))
  '((mov ax #x700) (mov es ax))

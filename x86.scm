@@ -959,14 +959,14 @@
   ;;               '(values 'cont SI DI CX))))
 
   (define (cg-lods dseg repeat eos eas k-restart k-continue)
-    ;; Copies ds:rDI to eAX, increments or decrements rDI.
-    ;; With repeat=z it repeats until rCX=0. For rDI/rCX eas
+    ;; Copies ds:rSI to eAX, increments or decrements rSI.
+    ;; With repeat=z it repeats until rCX=0. For rSI/rCX eas
     ;; is used, for rAX it uses eos.
     (define n (/ eos 8))
     (define (lp-maybe . body)
       (case repeat
         ((z)
-         `(let lp ((CX CX) (DI DI) (SI SI) (iterations ,(div 65 n)))
+         `(let lp ((CX CX) (SI SI) (iterations ,(div 65 n)))
             (cond ((eqv? iterations 0) ,k-restart)
                   (else ,@body))))
         (else `(begin ,@body))))
@@ -974,7 +974,6 @@
        ,(lp-maybe
          `(let ((src-addr ,(cg+ dseg (cg-register-ref idx-SI eas))))
             (let* (,@(cgl-register-update idx-AX eos `(RAM src-addr ,eos))
-                   ,@(cgl-register-update idx-DI eas (cg+ 'DI 'n))
                    ,@(cgl-register-update idx-SI eas (cg+ 'SI 'n)))
               ,(case repeat
                  ((z)
@@ -982,7 +981,7 @@
                           ,@(cgl-register-update idx-CX eas (cg- 'count 'n)))
                      (if (eqv? ,(cg-register-ref idx-CX eas) 0)
                          ,k-continue
-                         (lp CX DI SI (fx- iterations 1)))))
+                         (lp CX SI (fx- iterations 1)))))
                  (else k-continue)))))))
 
   ;; (expand/optimize
@@ -1243,6 +1242,13 @@
                   (emit
                    `(let* (,@(cgl-r/m-set store location eos (cgasr src 4)))
                       ,(continue merge ip))))))
+             ((#x8D)                    ; lea Gv M
+              (with-r/m-operand ((ip store location modr/m) (cs ip 0 0 eas))
+                (unless (eq? store 'mem)
+                  (error 'generate-translation "TODO: raise #UD on register ref in LEA"))
+                (emit
+                 `(let* (,@(cgl-reg-set modr/m eos location))
+                    ,(continue merge ip)))))
              ((#x8E)                    ; mov Sw Ew
               (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                 (let ((reg (or (vector-ref '#(es #f ss ds fs gs #f #f) (ModR/M-reg modr/m))
@@ -1261,8 +1267,12 @@
                          ,@(cgl-register-update idx-AX eos 'vREG)
                          ,@(cgl-register-update regno eos 'vAX))
                     ,(continue merge ip)))))
-             ((#xA4 #xA5)
-              ;; movs Yb Xb, movs Yv Xv
+             ((#xA0)                    ; mov *AL Ob
+              (with-instruction-immediate* ((addr <- cs ip eos))
+                (emit
+                 `(let* (,@(cgl-register-update idx-AX 8 `(RAM ,addr 8)))
+                    ,(continue merge ip)))))
+             ((#xA4 #xA5)               ; movs Yb Xb, movs Yv Xv
               (let ((eos (if (eqv? op #xA4) 8 eos)))
                 (cond ((and repeat (not first?))
                        (emit (return merge start-ip)))
@@ -1273,8 +1283,7 @@
                                      (return #f start-ip)
                                      (return #f ip))))))))
              ;; ((#xA6 #xA7) cmps)
-             ((#xAA #xAB)
-              ;; stos Yb *AL, stos Yv *rAX
+             ((#xAA #xAB)               ; stos Yb *AL, stos Yv *rAX
               (let ((eos (if (eqv? op #xAA) 8 eos)))
                 (cond (repeat
                        (cond ((not first?)
@@ -1288,9 +1297,8 @@
                       (else
                        (emit
                         (cg-stos dseg #f eos eas #f (continue merge ip)))))))
-             ((#xAC #xAD)
-              ;; lods *AL Xb, lods *rAX Xv
-              (let ((eos (if (eqv? op #xAA) 8 eos)))
+             ((#xAC #xAD)               ; lods *AL Xb, lods *rAX Xv
+              (let ((eos (if (eqv? op #xAC) 8 eos)))
                 (cond (repeat
                        (cond ((not first?)
                               (emit (return merge start-ip)))
@@ -1325,6 +1333,9 @@
                                                  imm)
                                ,@(cgl-r/m-set store location eos 'result))
                           ,(continue #t ip))))))))
+             ((#xC3)                    ; ret
+              (emit (cg-pop eos 'saved-ip
+                            (return merge 'saved-ip))))
              ((#xC4 #xC5)               ; les Gz Mp, lds Gz Mp
               (with-r/m-operand ((ip store location modr/m)
                                  (cs ip dseg sseg eas))
@@ -1375,6 +1386,15 @@
                                                                        flag-TF
                                                                        flag-AC))))))
                                 ,(return merge 'off)))))))
+             ((#xCF)                    ; iret
+              (emit (cg-pop eos 'saved-ip
+                            (cg-pop eos 'saved-cs
+                                    (cg-pop eos 'saved-flags
+                                            `(let ((cs ,(cgasl 'saved-cs 4))
+                                                   (fl (lambda ()
+                                                         ,(cgand 'saved-flags #xffff))))
+                                               ;; No need to merge the flags.
+                                               ,(return #f 'saved-ip)))))))
              ((#xD0 #xD1 #xD2 #xD3)
               ;; Shift Group 2. Eb 1, Ev 1, Eb *CL, Ev *CL.
               (let ((eos (if (fxeven? op) 8 eos)))
@@ -1408,6 +1428,9 @@
              ((#xE8)                    ; call Jz
               (with-instruction-immediate-sx* ((disp <- cs ip eos))
                 (emit (cg-push 16 ip (return merge (fwand #xffff (fw+ ip disp)))))))
+             ((#xE9)                    ; jmp Jz
+              (with-instruction-immediate-sx* ((disp <- cs ip eos))
+                (emit (return merge (fwand #xffff (fw+ ip disp))))))
              ((#xEA)                    ; jmpf Ap
               (with-instruction-immediate* ((off <- cs ip eos)
                                             (seg <- cs ip 16))
