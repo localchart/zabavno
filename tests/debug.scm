@@ -290,4 +290,16 @@
  '((clc) (cmc))
  '((stc) (cmc))
 
+ ;; ;; F6 F7 TEST
+ ;; '((mov bx #x1200) (test bh #b10))
+ ;; '((mov bx #x1200) (test bh #b01))
+
+ ;; ;; F6 F7 MUL
+ ;; '((mov ax 6) (mov dx 7) (mul dx))
+ ;; '((mov ax 6) (mov dx 7) (mul dl))
+ ;; '((mov ax 3) (mul ax))
+
+ ;; ;; F6 F7 DIV
+ ;; '((mov ax 42) (cwd) (mov cx 6) (div cx))
+ ;; '((mov ax 42) (cwd) (mov cx 6) (div cl))
  )

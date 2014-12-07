@@ -690,6 +690,8 @@
 
   (define GROUP-3 '#(TEST TEST NOT NEG MUL IMUL DIV IDIV))
 
+  (define GROUP-4/5 '#(INC DEC CALL CALLF JMP JMPF PUSH #F))
+
   (define (cgl-arithmetic result result:u eos operator t0 t1)
     ;; TODO: Check the corner cases.
     (define (cgsub-overflow? a b result result-width)
@@ -761,6 +763,25 @@
          (fl-PF (lambda () ,(cg-PF result)))
          (fl-CF (lambda () 0))))
 
+      ((DIV)
+       ;; This returns an extra variable: div-trap?. If it's true then
+       ;; the caller should raise a #DE. Note that R6RS div and mod
+       ;; works fine here, since it's unsigned arithmetic.
+       `((t0 ,t0)
+         (t1 ,t1)
+         (div-by-zero (eqv? t1 0))
+         (tmp (if div-by-zero 0 (div t0 t1)))
+         (,result tmp)
+         (div-trap? (or div-by-zero (> tmp ,(- (expt 2 eos) 1))))
+         (,result:u (if div-by-zero 0 (mod t0 t1)))
+         ;; All the flags are undefined.
+         (fl-OF (lambda () 0))          ;undefined
+         (fl-SF (lambda () 0))          ;undefined
+         (fl-ZF (lambda () 0))          ;undefined
+         (fl-AF (lambda () 0))          ;undefined
+         (fl-PF (lambda () 0))          ;undefined
+         (fl-CF (lambda () 0))))        ;undefined
+
       ((INC/DEC)
        `((t0 ,t0)
          (t1 ,t1)
@@ -771,6 +792,20 @@
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () ,(cg-AF 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))))
+
+      ((MUL)
+       `((t0 ,t0)
+         (t1 ,t1)
+         (tmp (* t0 t1))
+         (,result tmp)
+         ;; CF and OF are set if the result did not fit in lower
+         ;; destination.
+         (fl-OF (lambda () (if (>= ,result ,(expt 2 eos)) ,flag-OF 0)))
+         (fl-SF (lambda () 0))          ;undefined
+         (fl-ZF (lambda () 0))          ;undefined
+         (fl-AF (lambda () 0))          ;undefined
+         (fl-PF (lambda () 0))          ;undefined
+         (fl-CF (lambda () (if (>= ,result ,(expt 2 eos)) ,flag-CF 0)))))
 
       ((OR)
        `((t0 ,t0)
@@ -1478,6 +1513,65 @@
               (emit
                `(let* ((fl-CF (lambda () (fxxor (fl-CF) ,flag-CF))))
                   ,(continue #t ip))))
+             ((#xF6 #xF7)               ; Unary group 3
+              (let ((eos (if (eqv? op #xF6) 8 eos)))
+                (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                  (let ((operator (vector-ref GROUP-3 (ModR/M-reg modr/m)))
+                        (input (cg-r/m-ref store location eos)))
+                    (case operator
+                      ((TEST)
+                       (with-instruction-immediate* ((imm <- cs ip eos))
+                         (emit
+                          `(let* (,@(cgl-arithmetic 'result #f eos 'TEST input imm))
+                             ,(continue #t ip)))))
+                      ((MUL)
+                       ;; Unsigned multiplication.
+                       (emit
+                        `(let* (,@(cgl-arithmetic 'result #f eos 'MUL input
+                                                  (cg-register-ref idx-AX eos)))
+                           ,(case eos
+                              ;; AX <- AL * input
+                              ((8)
+                               `(let* (,@(cgl-register-update idx-AX eos 'result))
+                                  ,(continue #t ip)))
+                              (else
+                               ;; DX:AX <- AX * input
+                               ;; EDX:EAX <- EAX * input
+                               ;FIXME: this can use result:u.
+                               `(let* (,@(cgl-register-update idx-AX eos
+                                                              (cgand 'result (- (expt 2 eos) 1)))
+                                       ,@(cgl-register-update idx-DX eos
+                                                              (cgasr 'result eos)))
+                                  ,(continue #t ip)))))))
+                      ((DIV)
+                       ;; Unsigned division.
+                       (case eos
+                         ((8)
+                          ;; AL <- AX quotient input
+                          ;; AH <- AX remainder input
+                          (emit
+                           `(let* (,@(cgl-arithmetic 'result:l 'result:u eos 'DIV
+                                                     (cg-register-ref idx-AX eos) input))
+                              (if div-trap?
+                                  (error 'generate-translation "FIXME: #DE")
+                                  (let* (,@(cgl-register-update idx-AX 16
+                                                                (cgior 'result:l
+                                                                       (cgasl 'result:u 8))))
+                                    ,(continue #t ip))))))
+                         (else
+                          ;; eAX <- eDX:eAX quotient input
+                          ;; eDX <- eDX:eAX remainder input
+                          (emit
+                           `(let* ((dx:ax ,(cgior (cg-register-ref idx-AX eos)
+                                                  (cgasl (cg-register-ref idx-DX eos) eos)))
+                                   ,@(cgl-arithmetic 'result:l 'result:u eos 'DIV 'dx:ax input))
+                              (if div-trap?
+                                  (error 'generate-translation "FIXME: #DE")
+                                  (let* (,@(cgl-register-update idx-AX eos 'result:l)
+                                         ,@(cgl-register-update idx-DX eos 'result:u))
+                                    ,(continue #t ip))))))))
+                      (else
+                       (error 'generate-translation "TODO: Unary Group 3" operator)))))))
              ((#xF8)                    ; clc
               (emit
                `(let* ((fl-CF (lambda () 0)))
@@ -1502,6 +1596,21 @@
               (emit
                `(let* ((fl (lambda () ,(cgior '(fl) flag-DF))))
                   ,(continue merge ip))))
+             ((#xFE #xFF)                    ; Group 4 and Group 5
+              (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                (let ((operator (vector-ref GROUP-4/5 (ModR/M-reg modr/m))))
+                  (case operator
+                    ((INC DEC)
+                     (let ((eos (if (eqv? op #xFE) 8 eos)))
+                       (emit
+                        `(let* (,@(cgl-arithmetic 'result #f eos 'INC/DEC
+                                                  (cg-r/m-ref store location eos)
+                                                  (if (eqv? operator 'INC) 1 -1))
+                                ,@(cgl-r/m-set store location eos 'result))
+                           ,(continue #t ip)))))
+                    (else
+                     ;; These other guys only exist on opcode #xFF.
+                     (error 'generate-translation "TODO in group 5" cs ip operator))))))
              (else
               ;; TODO: #UD
               (if (not first?)
