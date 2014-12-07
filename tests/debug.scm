@@ -264,6 +264,12 @@
  ;; '((mov si #x1) (mov bp #x1000) (lea ax (mem+ si bp)))
  ;; '((mov si #x1) (mov bp #x1000) (lea si (mem+ si bp)))
 
+ ;; 98, 99. Sign-extension.
+ '((mov al #x7f) (cbw))
+ '((mov al #x80) (cbw))
+ '((mov ax #x7fff) (cwd))
+ '((mov ax #x8000) (cwd))
+
  ;; MOV with segment registers
  '((xor ax ax) (mov ax cs))
  '((mov ax #x700) (mov es ax))

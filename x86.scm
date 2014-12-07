@@ -66,7 +66,7 @@
   (define DEFAULT-MEMORY-FILL #xF1)
 
   (define pretty-print
-    (lambda (x) (display x) (newline)))
+    (lambda (x) (write x) (newline)))
 
   (define code-env (environment '(rnrs)))
 
@@ -1267,11 +1267,38 @@
                          ,@(cgl-register-update idx-AX eos 'vREG)
                          ,@(cgl-register-update regno eos 'vAX))
                     ,(continue merge ip)))))
-             ((#xA0)                    ; mov *AL Ob
-              (with-instruction-immediate* ((addr <- cs ip eos))
+             ((#x98)                    ; cbw / cwde / cdqe
+              ;; Sign-extend al or ax, keeping the register value unsigned.
+              (let ((src-width (fxasr eos 1)))
                 (emit
-                 `(let* (,@(cgl-register-update idx-AX 8 `(RAM ,addr 8)))
+                 `(let* ((tmp0 ,(cg-register-ref idx-AX src-width))
+                         (tmp1 (if ,(cgbit-set? 'tmp0 (- src-width 1))
+                                   ,(cgior 'tmp0 (fwasl (- (fwasl 1 src-width) 1)
+                                                        src-width))
+                                   ,(cgand 'tmp0 (- (fwasl 1 src-width) 1))))
+                         ,@(cgl-register-update idx-AX eos 'tmp1))
                     ,(continue merge ip)))))
+             ((#x99)                    ; cwd / cdq / cqo
+              ;; Copy sign of eAX into eDX
+              (emit
+               `(let* ((tmp1 (if ,(cgbit-set? 'AX (- eos 1))
+                                 ,(- (fwasl 1 eos) 1)
+                                 0))
+                       ,@(cgl-register-update idx-DX eos 'tmp1))
+                  ,(continue merge ip))))
+             ((#xA0 #xA1)                    ; mov *AL Ob, mov *rAX Ov
+              (let ((eos (if (eqv? op #xA0) 8 eos)))
+                (with-instruction-immediate* ((addr <- cs ip eas))
+                  (emit
+                   `(let* (,@(cgl-register-update idx-AX eos `(RAM ,(cg+ dseg addr) ,eos)))
+                      ,(continue merge ip))))))
+             ((#xA2 #xA3)               ; mov Ob *AL, mov Ov *rAX
+             (let ((eos (if (eqv? op #xA2) 8 eos)))
+               (with-instruction-immediate* ((addr <- cs ip eas))
+                 (emit
+                  `(begin
+                     (RAM ,(cg+ dseg addr) ,eos ,(cg-register-ref idx-AX eos))
+                     ,(continue merge ip))))))
              ((#xA4 #xA5)               ; movs Yb Xb, movs Yv Xv
               (let ((eos (if (eqv? op #xA4) 8 eos)))
                 (cond ((and repeat (not first?))
@@ -1349,8 +1376,7 @@
                            (,(if (eqv? op #xC4) 'es 'ds)
                             seg))
                       ,(continue merge ip))))))
-             ((#xC6 #xC7)
-              ;; Group 11. Only one mov.
+             ((#xC6 #xC7)               ; Group 11
               (let ((eos (if (eqv? op #xC6) 8 eos)))
                 (with-r/m-operand ((ip store location modr/m)
                                    (cs ip dseg sseg eas))
