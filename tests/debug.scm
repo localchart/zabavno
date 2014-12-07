@@ -28,6 +28,8 @@
         (weinholt assembler x86)
         (rnrs))
 
+(define *capture-stdout* #t)
+
 (use-modules (ice-9 popen)
              (ice-9 expect)
              (ice-9 rdelim))
@@ -170,10 +172,13 @@
 (define (run p program)
   (define (capture thunk)
     (let-values (((port extract) (open-string-output-port)))
-      (with-output-to-port port
-                           (lambda ()
-                             (let ((ret (thunk)))
-                               (values ret (extract)))))))
+      (if *capture-stdout*
+          (with-output-to-port port
+                               (lambda ()
+                                 (let ((ret (thunk)))
+                                   (values ret (extract)))))
+          (let ((ret (thunk)))
+            (values ret "")))))
   ;; Make a copy of debug's original registers.
   (let ((m (capture (lambda () (dosemu-emulate-program p '((nop)))))))
     ;; Turn off TF.
@@ -241,6 +246,8 @@
       (close-pipe p)
       (set! p #f))))
 
+;; Some of these tests are waiting for support in the assembler, or
+;; for the emulator to save which flags are currently undefined.
 
 (run-tests
  ;; SHR.
