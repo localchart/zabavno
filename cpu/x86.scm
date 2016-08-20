@@ -1,5 +1,5 @@
 ;; -*- mode: scheme; coding: utf-8 -*-
-;; Copyright © 2014 Göran Weinholt <goran@weinholt.se>
+;; Copyright © 2014, 2016 Göran Weinholt <goran@weinholt.se>
 
 ;; Permission is hereby granted, free of charge, to any person obtaining a
 ;; copy of this software and associated documentation files (the "Software"),
@@ -22,7 +22,7 @@
 
 ;; Emulates an Intel 80386 in real address mode.
 
-(library (zabavno x86)
+(library (zabavno cpu x86)
   (export machine-run
           machine?
           make-machine

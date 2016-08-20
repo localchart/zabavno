@@ -1,6 +1,6 @@
 #!/usr/bin/env scheme-script
 ;; -*- mode: scheme; coding: utf-8 -*- !#
-;; Copyright © 2014 Göran Weinholt <goran@weinholt.se>
+;; Copyright © 2014, 2016 Göran Weinholt <goran@weinholt.se>
 
 ;; Permission is hereby granted, free of charge, to any person obtaining a
 ;; copy of this software and associated documentation files (the "Software"),
@@ -24,7 +24,7 @@
 ;; This program is written for GNU Guile. Tested with GNU Guile 2.0.11
 ;; and DOSEMU 1.4.0.1.
 
-(import (zabavno x86)
+(import (zabavno cpu x86)
         (weinholt assembler x86)
         (rnrs))
 
