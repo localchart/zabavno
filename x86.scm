@@ -883,6 +883,11 @@
               ,@(cgl-register-update idx-SP eos (cg+ (cg-trunc 'SP eos) n)))
          ,k)))
 
+  (define (cg-pop* eos x . x*)
+    (if (null? x*)
+        x
+        (cg-pop eos x (apply cg-pop* eos x*))))
+
   (define (cg-push eos expr k)
     (let ((n (/ eos 8)))
       `(begin
@@ -1222,10 +1227,27 @@
               ;; pop *rAX/r8 ... *rDI/r15
               (let ((reg (vector-ref reg-names (fxand op #x7))))
                 (emit (cg-pop eos reg (continue merge ip)))))
-             ((#x68)                    ;push Iz
+             ((#x60)                    ; pushaw / pushad
+              (emit
+               `(let ((saved-SP SP))
+                  ,(cg-push* eos 'AX 'CX 'DX 'BX 'saved-SP 'BP 'SI 'DI
+                             (continue merge ip)))))
+             ((#x61)                    ; popaw / popad
+              (emit
+               (cg-pop* eos 'DI^ 'SI^ 'BP^ 'SP^ 'BX^ 'DX^ 'CX^ 'AX^
+                        `(let* (,@(cgl-register-update idx-AX eos 'AX^)
+                                ,@(cgl-register-update idx-CX eos 'CX^)
+                                ,@(cgl-register-update idx-DX eos 'DX^)
+                                ,@(cgl-register-update idx-BX eos 'BX^)
+                                ,@(cgl-register-update idx-SP eos 'SP^)
+                                ,@(cgl-register-update idx-BP eos 'BP^)
+                                ,@(cgl-register-update idx-SI eos 'SI^)
+                                ,@(cgl-register-update idx-DI eos 'DI^))
+                           ,(continue merge ip)))))
+             ((#x68)                    ; push Iz
               (with-instruction-immediate* ((imm <- cs ip eos))
                 (emit (cg-push eos imm (continue merge ip)))))
-             ((#x6A)                    ;push IbS
+             ((#x6A)                    ; push IbS
               (with-instruction-s8* ((imm <- cs ip))
                 (emit (cg-push eos imm (continue merge ip)))))
              ((#x70 #x71 #x72 #x73 #x74 #x75 #x76 #x77 #x78 #x79 #x7A #x7B #x7C #x7D #x7E #x7F)
@@ -1256,7 +1278,18 @@
                                    ((TEST CMP) '())
                                    (else (cgl-r/m-set store location eos 'result))))
                           ,(continue #t ip))))))))
-             ((#x88 #x89)               ; mov Eb Gb, mov Ev Gv
+             ;; ((#x84 #x85)    ; test Eb Gb, test Ev Gv
+             ;; )
+             ((#x86 #x87)               ; xchg Eb Gb, xchg Ev Gv
+              (let ((eos (if (eqv? op #x86) 8 eos)))
+                (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                  (emit
+                   `(let* ((v0 ,(cg-r/m-ref store location eos))
+                           (v1 ,(cg-reg-ref modr/m eos))
+                           ,@(cgl-r/m-set store location eos 'v1)
+                           ,@(cgl-reg-set modr/m eos 'v0))
+                      ,(continue merge ip))))))
+            ((#x88 #x89)               ; mov Eb Gb, mov Ev Gv
               (let ((eos (if (eqv? op #x88) 8 eos)))
                 (with-r/m-operand ((ip store location modr/m)
                                    (cs ip dseg sseg eas))
@@ -1502,13 +1535,18 @@
              ((#xEB)                    ; jmp Jb
               (with-instruction-s8* ((disp <- cs ip))
                 (emit (return merge (fwand #xffff (fw+ ip disp))))))
-             ((#xF1)
-              ;; icebp, In-Circuit Emulator BreakPoint. Exit. Normally
+             ((#xF1)                    ; icebp / int1
+              ;; In-Circuit Emulator BreakPoint. Exit. Normally
               ;; this would be equivalent to INT 1, except it doesn't
               ;; count as a software interrupt.
               (if (not first?)
                   (emit (return merge start-ip))
                   (emit (return merge #f))))
+             ((#xF4)                    ; hlt
+              ;; Halt and wait for an interrupt.
+              (if (not first?)
+                  (emit (return merge start-ip))
+                  (emit (return merge ip))))
              ((#xF5)                    ; cmc
               (emit
                `(let* ((fl-CF (lambda () (fxxor (fl-CF) ,flag-CF))))
