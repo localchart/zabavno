@@ -261,6 +261,15 @@
  ;; '((mov ax #b10000000)
  ;;   (shr ax 1))
 
+ ;; SHL.
+ '((mov ax #b10000000)
+   (shl ax 1))
+ '((mov ax #b11000000)
+   (shl ax 1))
+ '((mov ax #b10000000)
+   (mov cl 2)
+   (shl ax cl))
+
  ;; LEA
  ;; '((mov si #x1) (mov bp #x1000) (lea ax (mem+ si bp)))
  ;; '((mov si #x1) (mov bp #x1000) (lea si (mem+ si bp)))

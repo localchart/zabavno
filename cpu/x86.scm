@@ -872,9 +872,29 @@
          (fl-PF (lambda () ,(cg-PF result)))
          (fl-CF (lambda () ,(cg-CF)))))
 
+      ((SHL)                            ;same as SAL
+       `((t0 ,t0)
+         (t1 ,(cgand t1 #b00011111))
+         (tmp ,(cgasl 't0 't1))
+         (,result ,(cg-trunc 'tmp eos))
+         (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
+                                 ;; ((eqv? t1 1) 0) ;undefined
+                                 ((eqv? ,(cgbit-set? 't0 (cg- eos 't1))
+                                        ,(cgbit-set? 't0 (fx- eos 1)))
+                                  ,flag-OF)
+                                 (else 0))))
+         (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result))))
+         (fl-ZF (lambda () (if (eqv? t1 0) (fl-ZF) ,(cg-ZF result))))
+         (fl-AF (lambda () (if (eqv? t1 0) (fl-AF) 0))) ;undefined
+         (fl-PF (lambda () (if (eqv? t1 0) (fl-PF) ,(cg-PF result))))
+         (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
+                               (if ,(cgbit-set? 't0 (cg- eos 't1))
+                                   ,flag-CF
+                                   0))))))
+
       ((SHR)
        `((t0 ,t0)
-         (t1 ,(cgand t1 #x11111))
+         (t1 ,(cgand t1 #b00011111))
          (tmp ,(cgasr 't0 't1))
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
