@@ -43,6 +43,7 @@
           machine?
           make-machine
           machine-debug machine-debug-set!
+          machine-trace machine-trace-set!
           machine-RAM machine-RAM-set!
           machine-read-hook machine-read-hook-set!
           machine-write-hook machine-write-hook-set!
@@ -108,9 +109,10 @@
           (lambda (x) x))))
 
   (define-record-type machine
-    (nongenerative machine-89ee4b42-da63-4afb-b294-b15350aedbc0)
+    (nongenerative machine-920229b9-424c-4b34-8517-9e2c6fb589fe)
     (sealed #t)
     (fields (mutable debug)
+            (mutable trace)
             ;; Memory and I/O
             (mutable RAM)
             (mutable read-hook)
@@ -140,7 +142,7 @@
     (protocol
      (lambda (p)
        (lambda ()
-         (p #f
+         (p #f #f
             ;; Memory and I/O
             (make-empty-memory)
             (lambda (address size) #f)
@@ -1731,7 +1733,7 @@
   (define (machine-run)
     (define M *current-machine*)
     (define debug (machine-debug M))
-    (define trace (and debug #f))
+    (define trace (machine-trace M))
     ;; TODO: Very important: invalidation of this translation cache.
     ;; And that might require using something other than a hashtable.
     (define translations (machine-translations M))

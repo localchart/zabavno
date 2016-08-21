@@ -22,7 +22,7 @@
 #!r6rs
 
 ;; This program is written for GNU Guile. Tested with GNU Guile 2.0.11
-;; and DOSEMU 1.4.0.1.
+;; and DOSEMU 1.4.0.8.
 
 (import (zabavno cpu x86)
         (weinholt assembler x86)
@@ -159,6 +159,7 @@
     (with-machine m
       (lambda ()
         (machine-debug-set! m #t)
+        (machine-trace-set! m #t)
         ;; Copy in the code.
         (machine-IP-set! m #x100)
         (let ((addr (+ (* (machine-CS m) 16)
@@ -197,8 +198,7 @@
         machine-SI machine-DI machine-DS machine-ES machine-SS machine-CS
         machine-IP))
 
-(define regs '(AX BX CX DX SP BP
-                  SI DI DS ES SS CS IP))
+(define regs '(AX BX CX DX SP BP SI DI DS ES SS CS IP))
 
 (define (test p program)
   (format #t "~%Testing ~a~%" program)
@@ -214,7 +214,8 @@
                          (let ((rz (getter mz))
                                (rd (getter md)))
                            (unless (= rz rd)
-                             (format #t "Register ~a differs. #x~x != #x~x.~%" reg rz rd))
+                             (format #t "Register ~a differs. #x~x != #x~x (zabavno vs dosemu).~%"
+                                     reg rz rd))
                            (eqv? rz rd)))
                        regs reg-getters))
              (same-flags (= fz fd)))
@@ -222,9 +223,9 @@
           ;; It can be OK that the flags differ. Some flags are
           ;; undefined after some operations. TODO: keep track of what
           ;; flags are undefined.
-          (format #t "FLAGS differs. #b~a != #b~a (#b~a).~%" (number->string fz 2)
+          (format #t "Warning: FLAGS differs. #b~a != #b~a (#b~a).~%" (number->string fz 2)
                   (number->string fd 2) (number->string (fxxor fd fz) 2)))
-        (unless (and same-regs same-flags)
+        (unless same-regs
           (show-output "D: " od)
           (show-output "Z: " oz))))))
 
