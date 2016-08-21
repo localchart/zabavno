@@ -22,50 +22,25 @@
 #!r6rs
 
 (library (zabavno loader pcboot)
-  (export detect-boot-sector run-boot)
+  (export detect-boot-sector load-boot-sector)
   (import (rnrs (6))
           (zabavno cpu x86))
 
-  (define (detect-boot-sector filename)
-    "Will be true if the file looks like it contains a PC boot sector."
-    (call-with-port (open-file-input-port filename)
-      (lambda (p)
-        (let ((boot-sector (get-bytevector-n p 512)))
-          (and (not (eof-object? boot-sector))
-               (= (bytevector-length boot-sector) 512)
-               (eqv? (bytevector-u16-ref boot-sector 510 (endianness big)) #x55AA))))))
+  ;; Check if the port contains a boot sector.
+  (define (detect-boot-sector image-port)
+    (set-port-position! image-port 0)
+    (let ((boot-sector (get-bytevector-n image-port 512)))
+      (and (not (eof-object? boot-sector))
+           (= (bytevector-length boot-sector) 512)
+           (eqv? (bytevector-u16-ref boot-sector 510 (endianness big)) #x55AA))))
 
-  ;; Runs a boot sector from a named file and runs it, using the given
-  ;; BIOS.
-  (define (run-boot filename bios)
-    (let ((M (make-machine)))
-      (with-machine M
-        (lambda ()
-          (call-with-port (open-file-input-port filename)
-            (lambda (p)
-              (let ((boot-sector (get-bytevector-n p 512)))
-                (copy-to-memory #x7C00 boot-sector))))
-          (machine-debug-set! (current-machine) #f)
-          ;; Start running code at 0000:7C00.
-          (machine-CS-set! (current-machine) #x0000)
-          (machine-IP-set! (current-machine) #x7C00)
-          (do ((seg #xF000)
-               (int 0 (+ int 1)))
-              ((= int #x100)
-               (let ((off int))
-                 (memory-u8-set! (+ (* seg 16) off)
-                                 #xCF)))     ;IRET
-            (let* ((addr (fxarithmetic-shift-left int 2))
-                   (off int))
-              (memory-u16-set! addr off)
-              (memory-u16-set! (+ addr 2) seg)
-              (memory-u8-set! (+ (* seg 16) off)
-                              #xF1)))     ;ICEBP
-          (let lp ()
-            (machine-run)
-            (cond ((and (eqv? (machine-CS M) #xF000)
-                        (<= (machine-IP M) #xFF))
-                   ;; An interrupt vector. Fake BIOS calls.
-                   (unless (eqv? (bios M (machine-IP M)) 'exit-dos)
-                     (machine-IP-set! M #x100) ;Points at IRET
-                     (lp))))))))))
+  ;; Loads a boot sector (e.g. a floppy boot sector or MBR) into the
+  ;; current machine.
+  (define (load-boot-sector image-port)
+    (let ((M (current-machine)))
+      ;; Start running code at 0000:7C00.
+      (machine-CS-set! (current-machine) #x0000)
+      (machine-IP-set! (current-machine) #x7C00)
+      (set-port-position! image-port 0)
+      (let ((boot-sector (get-bytevector-n image-port 512)))
+        (copy-to-memory (real-pointer (machine-CS M) (machine-IP M)) boot-sector)))))

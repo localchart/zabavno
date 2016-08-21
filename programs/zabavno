@@ -28,18 +28,42 @@
         (zabavno loader pcboot)
         (zabavno loader doscom))
 
-(define (main filename)
-  (cond ((detect-boot-sector filename)
-         (run-boot filename pcbios))
-        (else
-         (run-dos filename pcbios))))
+(define (main filename enable-debug)
+  (let ((M (make-machine)))
+    (with-machine M
+      (lambda ()
+        (machine-debug-set! M enable-debug)
+        (call-with-port (open-file-input-port filename)
+          (lambda (p)
+            (if (detect-boot-sector p)
+                (load-boot-sector p)
+                (load-dos-com-image p))))
+        (pcbios-setup)
+        (let lp ()
+          (machine-run)                 ;run until ICEBP
+          (when (eq? (pcbios-post-emulator-exit M) 'continue-emulator)
+            (lp)))))))
 
-(apply
- (case-lambda
-   ((_ filename)
-    (main filename))
-   (_
-    (display "The zabavno machine emulator test program
-Usage: zabavno.scm <program-image>\n
-The image may be a DOS .com file or a PC boot sector.\n")))
- (command-line))
+(define (display-help)
+  (display "The zabavno machine emulator test program\n\
+Usage: zabavno [--debug] <program-image>\n\
+The image may be a DOS .com file or a PC boot sector.\n"
+           (current-error-port)))
+
+;; Handle command line arguments.
+(let lp ((parameters (cdr (command-line)))
+         (filename #f)
+         (enable-debug #f))
+  (cond ((null? parameters)
+         (cond (filename
+                (main filename enable-debug))
+               (else
+                (display-help)
+                (exit 1))))
+        ((equal? (car parameters) "--debug")
+         (lp (cdr parameters) filename #t))
+        ((not filename)
+         (lp (cdr parameters) (car parameters) enable-debug))
+        (else
+         (display-help)
+         (exit 1))))

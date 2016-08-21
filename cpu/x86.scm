@@ -22,6 +22,22 @@
 
 ;; Emulates an Intel 80386 in real address mode.
 
+;; There is a concept of a current machine (changed using
+;; with-machine) and records that keep track of the machine state
+;; (made using make-machine). The registers of the machine are set
+;; using the record setters and accessors. The memory of the current
+;; machine is accessed using the memory-[su]*-{ref,set!} procedures or
+;; the copy-{to,from}-memory procedures. The machine-run procedure
+;; runs instructions at cs:ip until it encounters an ICEBP
+;; instruction.
+
+;; The emulated instructions are translated to Scheme and then
+;; compiled by eval so the emulator is somewhat snappy.
+
+;; Debugging is enabled by setting machine-debug to a true value. The
+;; debug output contains disassembly if the (weinholt disassembler
+;; x86) library from Industria is available.
+
 (library (zabavno cpu x86)
   (export machine-run
           machine?
@@ -55,6 +71,7 @@
           with-machine
           current-machine
           copy-to-memory copy-from-memory
+          real-pointer
 
           ;; Flag bits.
           flag-OF flag-SF flag-ZF flag-AF flag-PF flag-CF
@@ -144,12 +161,30 @@
   (define *write-hook*)
 
   (define (with-machine M thunk)
-    ;;TODO: dynamic-wind
-    (set! *current-machine* M)
-    (set! RAM (machine-RAM M))
-    (set! *read-hook* (machine-read-hook M))
-    (set! *write-hook* (machine-write-hook M))
-    (thunk))
+    (let ((old-machine #f)
+          (old-RAM #f)
+          (old-read-hook #f)
+          (old-write-hook #f))
+      (dynamic-wind
+        (lambda ()
+          (set! old-machine *current-machine*)
+          (set! old-RAM RAM)
+          (set! old-read-hook *read-hook*)
+          (set! old-write-hook *write-hook*)
+          (set! *current-machine* M)
+          (set! RAM (machine-RAM M))
+          (set! *read-hook* (machine-read-hook M))
+          (set! *write-hook* (machine-write-hook M)))
+        thunk
+        (lambda ()
+          (set! *current-machine* old-machine)
+          (set! RAM old-RAM)
+          (set! *read-hook* old-read-hook)
+          (set! *write-hook* old-write-hook)
+          (set! old-machine #f)
+          (set! old-RAM #f)
+          (set! old-read-hook #f)
+          (set! old-write-hook #f)))))
 
   (define (current-machine)
     *current-machine*)
@@ -183,6 +218,10 @@
       ((16) (fwand n #xffff))
       ((8) (fwand n #xff))
       (else (fwand n #xffffffff))))
+
+  (define (real-pointer segment offset)
+    ;; Turn a real-mode pointer into an address.
+    (fw+ (fwasl (fwand segment #xffff) 4) (fwand offset #xffff)))
 
   (define (segment-selector n)
     ;; The emulator runs with all segment selectors scaled for easy
@@ -1770,6 +1809,4 @@
                  (machine-FS-set! M (segment-selector fs^))
                  (machine-GS-set! M (segment-selector gs^))
                  (machine-IP-set! M ip)
-                 (machine-FLAGS-set! M fl^)))))))
-
-  )
+                 (machine-FLAGS-set! M fl^))))))))

@@ -1,5 +1,5 @@
 ;; -*- mode: scheme; coding: utf-8 -*-
-;; Trivial PC BIOS firmware emulation
+;; PC emulator in Scheme
 ;; Copyright © 2016 Göran Weinholt <goran@weinholt.se>
 
 ;; Permission is hereby granted, free of charge, to any person obtaining a
@@ -21,19 +21,49 @@
 ;; DEALINGS IN THE SOFTWARE.
 #!r6rs
 
+;; Trivial PC BIOS firmware emulation
+
 (library (zabavno firmware pcbios)
-  (export pcbios)
+  (export pcbios-setup pcbios-post-emulator-exit pcbios-interrupt)
   (import (rnrs (6))
           (zabavno cpu x86))
 
   (define (print . x)
-    ;; XXX: This should be logging instead.
-    (for-each display x)
+    (for-each (lambda (x) (display x (current-error-port))) x)
     (newline))
 
-  (define (pcbios M vec)
+  ;; Prepare the current machine for BIOS interrupts.
+  (define (pcbios-setup)
+    (do ((seg #xF000)
+         (int 0 (+ int 1)))
+        ((= int #x100)
+         (let ((off int))
+           (memory-u8-set! (+ (* seg 16) off) #xCF))) ;IRET
+      (let* ((addr (fxarithmetic-shift-left int 2))
+             (off int))
+        (memory-u16-set! addr off)
+        (memory-u16-set! (+ addr 2) seg)
+        (memory-u8-set! (real-pointer seg off) #xF1)))) ;ICEBP
+
+  ;; This procedure runs after machine-run has exited and checks if
+  ;; the machine is at a BIOS interrupt vector. It's a bit hacky doing
+  ;; it this way, but it's easier to get started.
+  (define (pcbios-post-emulator-exit M)
+    (cond ((and (eqv? (machine-CS M) #xF000)
+                (<= (machine-IP M) #xFF))
+           ;; An interrupt vector. Fake BIOS calls.
+           (cond ((eqv? (pcbios-interrupt M (machine-IP M)) 'exit-dos)
+                  'exit-emulator)
+                 (else
+                  (machine-IP-set! M #x100) ;Points at IRET
+                  'continue-emulator)))
+          (else 'exit-emulator)))
+
+  ;; Handle a BIOS interrupt.
+  (define (pcbios-interrupt M vec)
     (define (set-CF)
-      (print "Unhandled INT #x" (number->string vec 16)
+      ;; XXX: This should be logging instead.
+      (print "Unhandled BIOS INT #x" (number->string vec 16)
              " AX=#x" (number->string (machine-AX M) 16))
       (let ((addr (+ (* (machine-SS M) 16)
                      (machine-SP M)
@@ -47,6 +77,9 @@
         (memory-u16-set! addr (fxand (fxnot flag-CF)
                                      (memory-u16-ref addr)))))
     (let ((AH (bitwise-bit-field (machine-AX M) 8 16)))
+      (when (machine-debug M)
+        (print "pcbios: BIOS INT #x" (number->string vec 16)
+               " AX=#x" (number->string (machine-AX M) 16)))
       (case vec
         ((#x10)
          (case AH
@@ -107,6 +140,4 @@
            (else
             (set-CF))))
         (else
-         (set-CF)))))
-
-  )
+         (set-CF))))))
