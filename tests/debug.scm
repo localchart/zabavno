@@ -82,7 +82,7 @@
     (send-code p code)))
 
 ;; Trace program execution in the debugger. Returns a machine with the
-;; registers set as they were in the machine (expect the flags).
+;; registers set as they were in the machine (except the flags).
 (define (trace p address count)
   (write-line (format #f "t =~a ~a\r" (number->string address 16) count) p)
   (let ((m (make-machine)))
@@ -251,6 +251,16 @@
 ;; for the emulator to save which flags are currently undefined.
 
 (run-tests
+ ;; CMPS.
+ '((mov di #x100)
+   (mov si di)
+   (%u8 #xa6))
+
+ '((mov di #x100)
+   (mov si di)
+   (mov cx 1)
+   (%u8 #xf3 #xa6))
+
  ;; SHR.
  ;; '((mov ax #b0)
  ;;   (shr ax 1))
