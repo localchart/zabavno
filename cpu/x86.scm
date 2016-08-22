@@ -938,8 +938,8 @@
 
   (define (cg-pop eos target k)
     (let ((n (/ eos 8)))
-      ;; TODO: Giving target like this will not work for 32-bit
-      ;; pops and memory destinations.
+      ;; The target is a temporary variable, the register/memory write
+      ;; semantics are implemented by the caller.
       `(let* ((,target (RAM ,(cg+ 'ss 'SP) ,eos))
               ,@(cgl-register-update idx-SP eos (cg+ (cg-trunc 'SP eos) n)))
          ,k)))
@@ -1322,8 +1322,10 @@
                 (emit (cg-push eos reg (continue merge ip)))))
              ((#x58 #x59 #x5A #x5B #x5C #x5D #x5E #x5F)
               ;; pop *rAX/r8 ... *rDI/r15
-              (let ((reg (vector-ref reg-names (fxand op #x7))))
-                (emit (cg-pop eos reg (continue merge ip)))))
+              (let ((reg (fxand op #x7)))
+                (emit (cg-pop eos 'tmp
+                              `(let* (,@(cgl-register-update reg eos 'tmp))
+                                 ,(continue merge ip))))))
              ((#x60)                    ; pushaw / pushad
               (emit
                `(let ((saved-SP SP))
@@ -1421,6 +1423,13 @@
                   (emit
                    `(let* ((,reg ,(cgasl (cg-r/m-ref store location 16) 4)))
                       ,(continue merge ip))))))
+             ((#x8F)                    ; Group 1A - pop Ev
+              (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                (unless (eqv? (ModR/M-reg modr/m) 0)
+                  (error 'generate-translation "TODO: raise #UD in Group 1A"))
+                (emit (cg-pop eos 'tmp
+                              `(let (,@(cgl-r/m-set store location eos 'tmp))
+                                 ,(continue merge ip))))))
              ((#x90)                    ; nop
               (emit (continue merge ip)))
              ((#;#x90 #x91 #x92 #x93 #x94 #x95 #x96 #x97)
