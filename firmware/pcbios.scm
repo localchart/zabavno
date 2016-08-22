@@ -71,6 +71,10 @@
         (memory-u16-set! addr off)
         (memory-u16-set! (+ addr 2) seg)
         (memory-u8-set! (real-pointer seg off) #xF1))) ;ICEBP
+    (let ((equipment (fxior (fxarithmetic-shift-left 1 0) ;floppy disk
+                            (fxarithmetic-shift-left 0 1) ;no 387
+                            (fxarithmetic-shift-left #b10 4)))) ;80x25 color
+      (memory-u16-set! (real-pointer #x0040 #x0010) equipment))
     (memory-u16-set! (real-pointer #x0040 #x0013)
                      (fxdiv (machine-memory-size (current-machine)) 1024))
     (make-bios))
@@ -125,6 +129,10 @@
             (clear-CF))
            (else
             (not-implemented))))
+        ((#x11)
+         ;; Get equipment list.
+         (machine-AX-set! M (memory-u16-ref (real-pointer #x0040 #x0010)))
+         (clear-CF))
         ((#x12)
          ;; Get memory size.
          (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xffff))
