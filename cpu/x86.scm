@@ -1770,8 +1770,14 @@
                                 ,@(cgl-r/m-set store location eos 'result))
                            ,(continue #t ip)))))
                     (else
-                     ;; These other guys only exist on opcode #xFF.
-                     (error 'generate-translation "TODO in group 5" cs ip operator))))))
+                     (unless (eqv? op #xFF)
+                       (error 'generate-translation "TODO: raise #UD in group 5" operator))
+                     (case operator
+                       ((PUSH)          ;push Ev
+                        (emit (cg-push eos (cg-r/m-ref store location eos)
+                                       (continue merge ip))))
+                       (else
+                        (error 'generate-translation "TODO in group 5" cs ip operator))))))))
              (else
               ;; TODO: #UD
               (if (not first?)
