@@ -77,7 +77,8 @@
 
           ;; Flag bits.
           flag-OF flag-SF flag-ZF flag-AF flag-PF flag-CF
-          flag-DF flag-IF flag-TF flag-AC)
+          flag-DF flag-IF flag-TF flag-AC
+          print-flags)
   (import (rnrs)
           (rnrs eval))
 
@@ -765,7 +766,7 @@
                          (cgxor b result))
                   (fx- result-width 1)))
     (define (cg-AF a b)
-      ;; TODO: this is probably wrong.
+      ;; TODO: this is wrong.
       `(if ,(cgbit-set? (cg+ (cgand a #b1111)
                              (cgand b #b1111))
                         4)
@@ -877,6 +878,22 @@
          (fl-PF (lambda () ,(cg-PF result)))
          (fl-CF (lambda () 0))))
 
+      ((ROL)
+       `((t0 ,t0)
+         (t1 ,(cgand t1 #b00011111))
+         (tmp (bitwise-rotate-bit-field t0 0 ,eos t1))
+         (,result ,(cg-trunc 'tmp eos))
+         (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
+                                 ;; undefined if t1 > 1
+                                 ((not (eqv? ,(cgbit-set? 't0 (cg- eos 't1))
+                                             ,(cgbit-set? 'tmp (fx- eos 1))))
+                                  ,flag-OF)
+                                 (else 0))))
+         (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
+                               (if ,(cgbit-set? 't0 (cg- eos 't1))
+                                   ,flag-CF
+                                   0))))))
+
       ((SBB)
        `((t0 ,t0)
          (t1 ,t1)
@@ -895,14 +912,14 @@
          (tmp ,(cgasl 't0 't1))
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
-                                 ;; ((eqv? t1 1) 0) ;undefined
-                                 ((eqv? ,(cgbit-set? 't0 (cg- eos 't1))
-                                        ,(cgbit-set? 't0 (fx- eos 1)))
+                                 ;; undefined if t1 > 1
+                                 ((not (eqv? ,(cgbit-set? 't0 (cg- eos 't1))
+                                             ,(cgbit-set? 'tmp (fx- eos 1))))
                                   ,flag-OF)
                                  (else 0))))
          (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result))))
          (fl-ZF (lambda () (if (eqv? t1 0) (fl-ZF) ,(cg-ZF result))))
-         (fl-AF (lambda () (if (eqv? t1 0) (fl-AF) 0))) ;undefined
+         ;;(fl-AF (lambda () (if (eqv? t1 0) (fl-AF) ,flag-AF))) ;undefined
          (fl-PF (lambda () (if (eqv? t1 0) (fl-PF) ,(cg-PF result))))
          (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
                                (if ,(cgbit-set? 't0 (cg- eos 't1))
@@ -1513,6 +1530,14 @@
                                              (return #t ip))))))
                       (else
                        (emit (cg-cmps dseg #f eos eas #f (continue #t ip)))))))
+             ((#xA8 #xA9)               ; test *AL Ib, test *rAX Iz
+              (let ((eos (if (eqv? op #xA8) 8 eos)))
+                (with-instruction-immediate* ((imm <- cs ip eos))
+                  (emit
+                   `(let* (,@(cgl-arithmetic 'result #f eos 'TEST
+                                             (cg-register-ref idx-AX eos)
+                                             imm))
+                      ,(continue #t ip))))))
              ((#xAA #xAB)               ; stos Yb *AL, stos Yv *rAX
               (let ((eos (if (eqv? op #xAA) 8 eos)))
                 (cond (repeat

@@ -223,8 +223,11 @@
           ;; It can be OK that the flags differ. Some flags are
           ;; undefined after some operations. TODO: keep track of what
           ;; flags are undefined.
-          (format #t "Warning: FLAGS differs. #b~a != #b~a (#b~a).~%" (number->string fz 2)
-                  (number->string fd 2) (number->string (fxxor fd fz) 2)))
+          (display "Warning: FLAGS differs.")
+          (print-flags fz)
+          (display " !=")
+          (print-flags fd)
+          (display " (zabavno vs dosemu).\n"))
         (unless same-regs
           (show-output "D: " od)
           (show-output "Z: " oz))))))
@@ -271,6 +274,12 @@
  ;; '((mov ax #b10000000)
  ;;   (shr ax 1))
 
+ ;; ROL.
+ '((mov al #b10000000)
+   (rol al 1))
+ '((mov al #b10100000)
+   (rol al 2))
+
  ;; SHL.
  '((mov ax #b10000000)
    (shl ax 1))
@@ -279,6 +288,12 @@
  '((mov ax #b10000000)
    (mov cl 2)
    (shl ax cl))
+
+ ;; TEST.
+ '((mov ax #x0101)
+   (test ax #x0101))
+ '((mov al #x10)
+   (test al #x01))
 
  ;; LEA
  ;; '((mov si #x1) (mov bp #x1000) (lea ax (mem+ si bp)))
