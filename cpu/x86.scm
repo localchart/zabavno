@@ -97,7 +97,11 @@
              (eval 'get-instruction (environment '(weinholt disassembler x86)))))
         (lambda (bv)
           (call-with-port (open-bytevector-input-port bv)
-            (lambda (p) (get-instruction p 16 #f)))))))
+            (lambda (p)
+              (guard
+                  (exn
+                   (else `(undefined: ,(condition-message exn) ,@(condition-irritants exn))))
+                (get-instruction p 16 #f))))))))
 
   ;; Import cp0 for development.
   (define expand/optimize
@@ -139,7 +143,8 @@
             ;; Other stuff
             (mutable IP)
             (mutable FLAGS)
-            (immutable translations))
+            (immutable translations)
+            (immutable translation-validity))
     (protocol
      (lambda (p)
        (lambda ()
@@ -156,6 +161,7 @@
             0 0 0 0 0 0
             ;; Other stuff
             0 (fxior flags-always-set flag-IF)
+            (make-eqv-hashtable)
             (make-eqv-hashtable))))))
 
   (define *current-machine*)
@@ -445,10 +451,12 @@
     (cond ((*write-hook* addr value 'u8))
           ((vector-ref RAM (RAM-page addr)) =>
            (lambda (page)
+             (invalidate-translation addr)
              (bytevector-u8-set! page (RAM-page-offset addr) value)))
           (else
            (let ((page (make-bytevector page-size DEFAULT-MEMORY-FILL)))
              (vector-set! RAM (RAM-page addr) page)
+             (invalidate-translation addr)
              (bytevector-u8-set! page (RAM-page-offset addr) value)))))
 
   (define (memory-u16-set! addr value)
@@ -457,10 +465,12 @@
           ((fxzero? (fxand addr #b1))
            (cond ((vector-ref RAM (RAM-page addr)) =>
                   (lambda (page)
+                    (invalidate-translation addr)
                     (bytevector-u16le-set! page (RAM-page-offset addr) value)))
                  (else
                   (let ((page (make-bytevector page-size DEFAULT-MEMORY-FILL)))
                     (vector-set! RAM (RAM-page addr) page)
+                    (invalidate-translation addr)
                     (bytevector-u16le-set! page (RAM-page-offset addr) value)))))
           (else
            (memory-u8-set! addr (fxand value #xff))
@@ -472,10 +482,12 @@
           ((fxzero? (fxand addr #b11))
            (cond ((vector-ref RAM (RAM-page addr)) =>
                   (lambda (page)
+                    (invalidate-translation addr)
                     (bytevector-u32le-set! page (RAM-page-offset addr) value)))
                  (else
                   (let ((page (make-bytevector page-size DEFAULT-MEMORY-FILL)))
                     (vector-set! RAM (RAM-page addr) page)
+                    (invalidate-translation addr)
                     (bytevector-u32le-set! page (RAM-page-offset addr) value)))))
           (else
            (memory-u8-set! addr (fwand value #xff))
@@ -1784,28 +1796,59 @@
                   (emit (return merge start-ip))
                   (error 'generate-translation "Unimplemented instruction" cs ip op)))))))))
 
+;;; Translation cache
+
+  (define (translation-line-number address)
+    ;; A cached translation is invalidated if a write is performed in
+    ;; the same same aligned 128-byte line as an existing translation.
+    (fxarithmetic-shift-right address 7))
+
   (define (generate-translation! translations cs ip debug instruction-limit)
-    (let* ((trans (generate-translation cs ip debug instruction-limit))
-           (trans (cond ((procedure? trans)
-                         trans)
-                        (else
-                         (when debug
-                           ;; (pretty-print trans)
-                           (pretty-print (expand/optimize trans)))
-                         (eval trans code-env)))))
-      (hashtable-set! translations (fw+ cs ip) trans)
-      trans))
+    (let ((trans (generate-translation cs ip debug instruction-limit)))
+      (cond ((procedure? trans)
+             trans)
+            (else
+             (when debug
+               ;; (pretty-print trans)
+               (pretty-print (expand/optimize trans)))
+             (eval trans code-env)))))
+
+  (define (translate cs ip debug instruction-limit)
+    (let* ((translations (machine-translations (current-machine)))
+           (validity (machine-translation-validity (current-machine)))
+           (address (fw+ cs ip))
+           (line (translation-line-number address)))
+      (cond ((and (hashtable-contains? validity line)
+                  (hashtable-ref translations address #f)))
+            (else
+             ;; TODO: need to know how many bytes were translated, or
+             ;; need to limit the translation to within a line.
+             ;; Self-modifying code might otherwise continue to run
+             ;; inside a translation that is trying to invalidate
+             ;; itself (although this is to some extent a problem even
+             ;; with real hardware, and SMC is unusual).
+             (let ((trans (generate-translation! translations cs ip debug instruction-limit)))
+               (hashtable-set! translations address trans)
+               (hashtable-set! validity line #t)
+               trans)))))
+
+  ;; There was an aligned write to the given address, invalidate any
+  ;; cached translations.
+  (define (invalidate-translation address)
+    ;; Right now this is done with a hashtable, but perhaps it should be a bit vector.
+    (let ((validity (machine-translation-validity (current-machine)))
+          (line (translation-line-number address)))
+      (when (hashtable-contains? validity line)
+        (when (machine-debug (current-machine))
+          (print "cache: invalidated translation at address " address))
+        (hashtable-delete! validity line))))
 
 ;;; Main loop
 
   (define bus
     (case-lambda
       ((command addr size value)
-       ;; TODO: Should actually be able to tell the caller if this
-       ;; write should invalidate the translation cache. Code that's
-       ;; part of the current translation may have changed (or is that
-       ;; illegal use of self-modifying code on the x86?). And
-       ;; actually, this can be inlined.
+       ;; TODO: Inline this code.
        (assert (fixnum? value))
        (assert (fixnum? addr))
        (case size
@@ -1822,10 +1865,6 @@
     (define M *current-machine*)
     (define debug (machine-debug M))
     (define trace (machine-trace M))
-    ;; TODO: Very important: invalidation of this translation cache.
-    ;; And that might require using something other than a hashtable.
-    (define translations (machine-translations M))
-
     (let loop ((fl (fxand (fxior (machine-FLAGS M)
                                  flags-always-set)
                           (fxnot flags-never-set)))
@@ -1872,9 +1911,7 @@
           (print (hex (segment-selector cs) 4) ":" (hex ip 4) "  "
                  (disassemble (copy-inst cs ip)))))
 
-      (let ((trans (or (hashtable-ref translations (fw+ cs ip) #f)
-                       (generate-translation! translations cs ip debug
-                                              (if trace 1 32)))))
+      (let ((trans (translate cs ip debug (if trace 1 32))))
         (let-values (((ip^ fl^ AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^
                            cs^ ds^ ss^ es^ fs^ gs^)
                       (trans bus fl AX CX DX BX SP BP SI DI
