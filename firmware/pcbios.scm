@@ -24,15 +24,35 @@
 ;; Trivial PC BIOS firmware emulation
 
 (library (zabavno firmware pcbios)
-  (export pcbios-setup pcbios-post-emulator-exit pcbios-interrupt)
+  (export pcbios-setup
+          pcbios-load-floppy-image
+          pcbios-post-emulator-exit
+          pcbios-interrupt)
   (import (rnrs (6))
-          (zabavno cpu x86))
+          (zabavno cpu x86)
+          #;(weinholt text hexdump))
+
+  (define-record-type bios
+    (fields floppy-drives disk-drives)
+    (protocol
+     (lambda (p)
+       (lambda ()
+         (p (make-vector 2 #f)
+            (make-vector 24 #f))))))
 
   (define (print . x)
     (for-each (lambda (x) (display x (current-error-port))) x)
     (newline))
 
-  ;; Prepare the current machine for BIOS interrupts.
+  ;; Converts from CHS format to LBA, for 1.44 MB floppies.
+  (define (floppy-2880-chs->lba cylinder head sector)
+    (let ((heads/cylinder 80)
+          (sectors/track 18))
+      (fx+ (fx* (fx+ (fx* cylinder heads/cylinder) head) sectors/track)
+           (fx- sector 1))))
+
+  ;; Prepare the current machine for BIOS calls. Returns an object
+  ;; that should be passed to other procedures in this library.
   (define (pcbios-setup)
     (do ((seg #xF000)
          (int 0 (+ int 1)))
@@ -43,16 +63,21 @@
              (off int))
         (memory-u16-set! addr off)
         (memory-u16-set! (+ addr 2) seg)
-        (memory-u8-set! (real-pointer seg off) #xF1)))) ;ICEBP
+        (memory-u8-set! (real-pointer seg off) #xF1))) ;ICEBP
+    (make-bios))
+
+  (define (pcbios-load-floppy-image bios-data drive-index image-port)
+    ;; Later this image should go to the floppy controller instead.
+    (vector-set! (bios-floppy-drives bios-data) drive-index image-port))
 
   ;; This procedure runs after machine-run has exited and checks if
   ;; the machine is at a BIOS interrupt vector. It's a bit hacky doing
   ;; it this way, but it's easier to get started.
-  (define (pcbios-post-emulator-exit M)
+  (define (pcbios-post-emulator-exit bios-data M)
     (cond ((and (eqv? (machine-CS M) #xF000)
                 (<= (machine-IP M) #xFF))
            ;; An interrupt vector. Fake BIOS calls.
-           (cond ((eqv? (pcbios-interrupt M (machine-IP M)) 'exit-dos)
+           (cond ((eqv? (pcbios-interrupt bios-data M (machine-IP M)) 'exit-dos)
                   'exit-emulator)
                  (else
                   (machine-IP-set! M #x100) ;Points at IRET
@@ -60,7 +85,7 @@
           (else 'exit-emulator)))
 
   ;; Handle a BIOS interrupt.
-  (define (pcbios-interrupt M vec)
+  (define (pcbios-interrupt bios-data M vec)
     (define (set-CF)
       ;; XXX: This should be logging instead.
       (print "Unhandled BIOS INT #x" (number->string vec 16)
@@ -94,6 +119,47 @@
            ((#x00)
             ;; Reset disk system.
             (clear-CF))
+           ((#x02)
+            (let ((sectors (fxand (machine-AX M) #xff))
+                  (cylinder (fxior (fxbit-field (machine-CX M) 8 16)
+                                   (fxarithmetic-shift-left
+                                    (fxbit-field (machine-CX M) 6 8) 6)))
+                  (sector (fxbit-field (machine-CX M) 0 6))
+                  (head (fxbit-field (machine-DX M) 8 16))
+                  (drive (fxbit-field (machine-DX M) 0 7))
+                  (disk-drive? (fxbit-set? (machine-DX M) 7))
+                  (buffer-seg (machine-ES M))
+                  (buffer-off (machine-BX M)))
+              (when (machine-debug M)
+                (print "pcbios: read " sectors " sectors from " (list cylinder sector head)
+                       " on drive " drive " to " buffer-seg ":" buffer-off))
+              (cond
+                ((zero? sectors)
+                 (set-CF))
+                ((and (not disk-drive?)
+                      (fx<? drive (vector-length (bios-floppy-drives bios-data)))
+                      (vector-ref (bios-floppy-drives bios-data) drive))
+                 => (lambda (image-port)
+                      (let ((lba (floppy-2880-chs->lba cylinder head sector)))
+                        (set-port-position! image-port (fx* lba 512))
+                        (let ((blocks (get-bytevector-n image-port (fx* sectors 512))))
+                          (define (set-status status sectors-read)
+                            (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xFFFF))
+                                                      (fxarithmetic-shift-left status 8)
+                                                      (if (bytevector? blocks)
+                                                          (fxdiv (bytevector-length blocks) 512)
+                                                          0))))
+                          (cond ((or (eof-object? blocks) (fx<? (bytevector-length blocks) 512))
+                                 (print "pcbios: disk read error")
+                                 (set-CF)
+                                 (set-status #x04 0)) ;04 = sector not found/read error
+                                (else
+                                 #;(hexdump (current-error-port) blocks)
+                                 (copy-to-memory (real-pointer buffer-seg buffer-off) blocks)
+                                 (clear-CF)
+                                 (set-status #x00 (fxdiv (bytevector-length blocks) 512))))))))
+                (else
+                 (set-CF)))))
            (else
             (set-CF))))
         ((#x20)
@@ -115,15 +181,6 @@
             ;; DOS version.
             (machine-AX-set! M #x0000))
            ((#x40)
-            ;; INT 21 - DOS 2+ - "WRITE" - WRITE TO FILE OR DEVICE
-            ;;     AH = 40h
-            ;;     BX = file handle
-            ;;     CX = number of bytes to write
-            ;;     DS:DX -> data to write
-            ;; Return: CF clear if successful
-            ;;         AX = number of bytes actually written
-            ;;     CF set on error
-            ;;         AX = error code (05h,06h) (see #01680 at AH=59h/BX=0000h)
             ;; XXX: do something about BX.
             (let ((file-handle (machine-BX M))
                   (count (fxand (machine-CX M) #xFFFF)))

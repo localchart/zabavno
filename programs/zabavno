@@ -35,14 +35,16 @@
         (machine-debug-set! M enable-debug)
         (call-with-port (open-file-input-port filename)
           (lambda (p)
-            (if (detect-boot-sector p)
-                (load-boot-sector p)
-                (load-dos-com-image p))))
-        (pcbios-setup)
-        (let lp ()
-          (machine-run)                 ;run until ICEBP
-          (when (eq? (pcbios-post-emulator-exit M) 'continue-emulator)
-            (lp)))))))
+            (let ((bios-data (pcbios-setup)))
+              (cond ((detect-boot-sector p)
+                     (load-boot-sector p)
+                     (pcbios-load-floppy-image bios-data 0 p)) ;drive A
+                    (else
+                     (load-dos-com-image p)))
+              (let lp ()
+                (machine-run)                 ;run until ICEBP
+                (when (eq? (pcbios-post-emulator-exit bios-data M) 'continue-emulator)
+                  (lp))))))))))
 
 (define (display-help)
   (display "The zabavno machine emulator test program\n\
