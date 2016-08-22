@@ -46,10 +46,17 @@
 
   ;; Converts from CHS format to LBA, for 1.44 MB floppies.
   (define (floppy-2880-chs->lba cylinder head sector)
-    (let ((heads/cylinder 80)
+    (let ((heads/cylinder 2)
           (sectors/track 18))
       (fx+ (fx* (fx+ (fx* cylinder heads/cylinder) head) sectors/track)
            (fx- sector 1))))
+
+  (define (lba->floppy-2880-chs lba)
+    (let ((heads/cylinder 2)
+          (sectors/track 18))
+      (values (fxdiv lba (fx* heads/cylinder sectors/track))
+              (fxmod (fxdiv lba sectors/track) heads/cylinder)
+              (fx+ (fxmod lba sectors/track) 1))))
 
   ;; Prepare the current machine for BIOS calls. Returns an object
   ;; that should be passed to other procedures in this library.
@@ -64,6 +71,8 @@
         (memory-u16-set! addr off)
         (memory-u16-set! (+ addr 2) seg)
         (memory-u8-set! (real-pointer seg off) #xF1))) ;ICEBP
+    (memory-u16-set! (real-pointer #x0040 #x0013)
+                     (fxdiv (machine-memory-size (current-machine)) 1024))
     (make-bios))
 
   (define (pcbios-load-floppy-image bios-data drive-index image-port)
@@ -86,10 +95,12 @@
 
   ;; Handle a BIOS interrupt.
   (define (pcbios-interrupt bios-data M vec)
-    (define (set-CF)
+    (define (not-implemented)
       ;; XXX: This should be logging instead.
       (print "Unhandled BIOS INT #x" (number->string vec 16)
              " AX=#x" (number->string (machine-AX M) 16))
+      (set-CF))
+    (define (set-CF)
       (let ((addr (+ (* (machine-SS M) 16)
                      (machine-SP M)
                      4)))
@@ -113,7 +124,12 @@
             (display (integer->char (fxand (machine-AX M) #xff)))
             (clear-CF))
            (else
-            (set-CF))))
+            (not-implemented))))
+        ((#x12)
+         ;; Get memory size.
+         (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xffff))
+                                   (memory-u16-ref (real-pointer #x0040 #x0013))))
+         (clear-CF))
         ((#x13)
          (case AH
            ((#x00)
@@ -150,7 +166,8 @@
                                                           (fxdiv (bytevector-length blocks) 512)
                                                           0))))
                           (cond ((or (eof-object? blocks) (fx<? (bytevector-length blocks) 512))
-                                 (print "pcbios: disk read error")
+                                 (print "pcbios: disk read error from c=" cylinder
+                                        ", h=" head ", s=" sector ", lba=" lba)
                                  (set-CF)
                                  (set-status #x04 0)) ;04 = sector not found/read error
                                 (else
@@ -161,8 +178,22 @@
                 (else
                  (set-CF)))))
            (else
-            (set-CF))))
+            (not-implemented))))
+        ((#x16)
+         (case AH
+           ((#x00)
+            ;; Get keystroke
+            (let* ((c (get-char (current-input-port)))
+                   (c (if (eof-object? c) (integer->char 26) c))) ;Ctrl-Z
+              (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xffff))
+                                        (fx* #x0101 (fxand (char->integer c) #xff))))
+              (clear-CF)))))
+        ((#x19)
+         ;; Bootstrap loader. Used to reboot the machine.
+         (clear-CF)
+         'exit-dos)
         ((#x20)
+         ;; Terminate program. Used to exit the program.
          'exit-dos)
         ((#x21)
          (case AH
@@ -195,6 +226,6 @@
                   (display char))))
             (clear-CF))
            (else
-            (set-CF))))
+            (not-implemented))))
         (else
-         (set-CF))))))
+         (not-implemented))))))

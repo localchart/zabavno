@@ -45,6 +45,7 @@
           machine-debug machine-debug-set!
           machine-trace machine-trace-set!
           machine-RAM machine-RAM-set!
+          machine-memory-size
           machine-read-hook machine-read-hook-set!
           machine-write-hook machine-write-hook-set!
           machine-in-hook machine-in-hook-set!
@@ -354,6 +355,10 @@
   (define page-bits 12)
   (define page-size (expt 2 page-bits))
 
+  ;; The size of the machine's physical memory in bytes.
+  (define (machine-memory-size M)
+    (* page-size (vector-length (machine-RAM M))))
+
   (define (print-memory addr len)
     (do ((i 0 (fx+ i 1)))
         ((fx=? i len)
@@ -384,7 +389,7 @@
     (make-vector (/ (* 1024 1024) page-size) #f))
 
   (define (RAM-page addr)
-    (fxarithmetic-shift-right addr page-bits))
+    (fxarithmetic-shift-right (fxand addr #xFFFFF) page-bits))
 
   (define (RAM-page-offset addr)
     (fxand addr (fx- page-size 1)))
