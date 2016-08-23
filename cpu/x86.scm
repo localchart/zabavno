@@ -86,7 +86,7 @@
   (define DEFAULT-MEMORY-FILL #xF1)
 
   (define pretty-print
-    (lambda (x) (display x) (newline)))
+    (lambda (x) (write x) (newline)))
 
   (define code-env (environment '(rnrs)))
 
@@ -919,7 +919,7 @@
                                  (else 0))))
          (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result))))
          (fl-ZF (lambda () (if (eqv? t1 0) (fl-ZF) ,(cg-ZF result))))
-         ;;(fl-AF (lambda () (if (eqv? t1 0) (fl-AF) ,flag-AF))) ;undefined
+         (fl-AF (lambda () (if (eqv? t1 0) (fl-AF) ,flag-AF))) ;undefined
          (fl-PF (lambda () (if (eqv? t1 0) (fl-PF) ,(cg-PF result))))
          (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
                                (if ,(cgbit-set? 't0 (cg- eos 't1))
@@ -1207,11 +1207,6 @@
   ;; that takes the most-used machine registers, does something to
   ;; them and the machine, and returns a new set of registers.
   (define (generate-translation cs ip debug instruction-limit)
-    ;; TODO: Memory writes should invalidate the translation cache. So
-    ;; translations should stop at page boundaries. Instructions that
-    ;; cross page boundaries should not be placed in the translation
-    ;; cache, since it's easier to just invalidate whole pages at
-    ;; once.
     (define (wrap expr)
       ;; Wrap the flags register and the arithmetic flags.
       `(lambda (bus fl AX CX DX BX SP BP SI DI
@@ -1220,6 +1215,10 @@
            (case-lambda
              ((addr size) (bus 'read-memory addr size))
              ((addr size value) (bus 'write-memory addr size value))))
+         (define I/O
+           (case-lambda
+             ((addr size) (bus 'read-i/o addr size))
+             ((addr size value) (bus 'write-i/o addr size value))))
          (let ((fl (lambda () fl))
                (fl-OF (lambda () (fxand fl ,flag-OF)))
                (fl-SF (lambda () (fxand fl ,flag-SF)))
@@ -1702,6 +1701,12 @@
                              ,(return #f (cgand #xffff (cg+ ip disp))))
                             (else
                              ,(return #f ip))))))))
+             ((#xE6 #xE7)               ; out Ib *AL, out Ib *eAX
+              (let ((eos (if (eqv? op #xE6) 8 eos)))
+                (with-instruction-u8* ((imm <- cs ip))
+                  (emit `(let ()
+                           (I/O ,imm ,eos ,(cg-register-ref idx-AX eos))
+                           ,(continue merge ip))))))
              ((#xE8)                    ; call Jz
               (with-instruction-immediate-sx* ((disp <- cs ip eos))
                 (emit (cg-push 16 ip (return merge (fwand #xffff (fw+ ip disp)))))))
@@ -1774,7 +1779,7 @@
                            `(let* (,@(cgl-arithmetic 'result:l 'result:u eos 'DIV
                                                      (cg-register-ref idx-AX eos) input))
                               (if div-trap?
-                                  (error 'generate-translation "FIXME: #DE")
+                                  (error 'generate-translation "FIXME:DE")
                                   (let* (,@(cgl-register-update idx-AX 16
                                                                 (cgior 'result:l
                                                                        (cgasl 'result:u 8))))
@@ -1787,7 +1792,7 @@
                                                   (cgasl (cg-register-ref idx-DX eos) eos)))
                                    ,@(cgl-arithmetic 'result:l 'result:u eos 'DIV 'dx:ax input))
                               (if div-trap?
-                                  (error 'generate-translation "FIXME: #DE")
+                                  (error 'generate-translation "FIXME:DE")
                                   (let* (,@(cgl-register-update idx-AX eos 'result:l)
                                          ,@(cgl-register-update idx-DX eos 'result:u))
                                     ,(continue #t ip))))))))
@@ -1920,15 +1925,25 @@
        ;; TODO: Inline this code.
        (assert (fixnum? value))
        (assert (fixnum? addr))
-       (case size
-         ((8) (memory-u8-set! addr value))
-         ((16) (memory-u16-set! addr value))
-         ((32) (memory-u32-set! addr value))))
+       (case command
+         ((write-memory)
+          (case size
+            ((8) (memory-u8-set! addr value))
+            ((16) (memory-u16-set! addr value))
+            ((32) (memory-u32-set! addr value))))
+         ((write-i/o)
+          (print "I/O write: " (list addr size value))
+          #f)))
       ((command addr size)
-       (case size
-         ((8) (memory-u8-ref addr))
-         ((16) (memory-u16-ref addr))
-         ((32) (memory-u32-ref addr))))))
+       (case command
+         ((read-memory)
+          (case size
+            ((8) (memory-u8-ref addr))
+            ((16) (memory-u16-ref addr))
+            ((32) (memory-u32-ref addr))))
+         ((read-i/o)
+          (print "I/O read: " (list addr size))
+          #xff)))))
 
   (define (machine-run)
     (define M *current-machine*)
