@@ -1493,6 +1493,30 @@
                                  0))
                        ,@(cgl-register-update idx-DX eos 'tmp1))
                   ,(continue merge ip))))
+             ((#x9A)                    ; callf Ap
+              (with-instruction-immediate* ((off <- cs ip eos)
+                                            (seg <- cs ip 16))
+                (emit
+                 (cg-push* 16 '(fxarithmetic-shift-right cs 4) ip
+                           `(let ((cs ,(fxasl seg 4))
+                                  (ip ,off))
+                              ,(return merge 'ip))))))
+             ((#x9C)                    ; pushfw / pushfd
+              (emit `(let* (,@(cgl-merge-fl merge))
+                       (let* ((fl^ (fl)) ;FIXME: clean up. Force one point of fl evaluation.
+                              (fl (lambda () fl^)))
+                         ,(cg-push eos 'fl^ (continue #f ip))))))
+             ((#x9D)                    ; popfw / popfd
+              (emit
+               (cg-pop eos 'tmp
+                       `(let ((fl (lambda ()
+                                    ;; Update the eos lower bits of flags.
+                                    ,(cgior flags-always-set
+                                            (cgand (cgior 'tmp
+                                                          (cgand '(fl) (bitwise-not
+                                                                        (- (expt 2 eos) 1))))
+                                                   (bitwise-not flags-never-set))))))
+                          ,(continue #f ip)))))
              ((#xA0 #xA1)                    ; mov *AL Ob, mov *rAX Ov
               (let ((eos (if (eqv? op #xA0) 8 eos)))
                 (with-instruction-immediate* ((addr <- cs ip eas))
@@ -1591,18 +1615,15 @@
               (emit (cg-pop eos 'saved-ip
                             (return merge 'saved-ip))))
              ((#xC4 #xC5)               ; les Gz Mp, lds Gz Mp
-              (with-r/m-operand ((ip store location modr/m)
-                                 (cs ip dseg sseg eas))
+              (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                 (assert (eq? store 'mem)) ;TODO: #UD
-                ;; TODO: is this right? 16:16 or 16:32?
                 (let ((off-size (if (eqv? eos 16) 2 4)))
                   (emit
-                   `(let* ((seg (fx* (RAM ,(cg+ location off-size) 16) 16))
-                           (off (RAM ,location ,eos))
-                           ,@(cgl-reg-set modr/m eos 'off)
-                           (,(if (eqv? op #xC4) 'es 'ds)
-                            seg))
-                      ,(continue merge ip))))))
+                   `(let ((seg (RAM ,(cg+ location off-size) 16))
+                          (off (RAM ,location ,eos)))
+                      (let (,@(cgl-reg-set modr/m eos 'off)
+                            (,(if (eqv? op #xC4) 'es 'ds) ,(cgasl 'seg 4)))
+                        ,(continue merge ip)))))))
              ((#xC6 #xC7)               ; Group 11
               (let ((eos (if (eqv? op #xC6) 8 eos)))
                 (with-r/m-operand ((ip store location modr/m)
@@ -1809,6 +1830,27 @@
                      (unless (eqv? op #xFF)
                        (error 'generate-translation "TODO: raise #UD in group 5" operator))
                      (case operator
+                       ((CALLF)         ; callf Mp
+                        (unless (eq? store 'mem)
+                          (error 'generate-translation "TODO: raise #UD in callf Mp"))
+                        (let ((z (case eos ((16) 2) (else 4))))
+                          (emit
+                           (cg-push* 16 '(fxarithmetic-shift-right cs 4) ip
+                                     `(let* ((addr ,location)
+                                             (off (RAM addr ,eos))
+                                             (seg (RAM ,(cg+ 'addr z) 16))
+                                             (cs ,(cgasl 'seg 4)))
+                                        ,(return merge 'off))))))
+                       ((JMPF)          ; jmpf Mp
+                        (unless (eq? store 'mem)
+                          (error 'generate-translation "TODO: raise #UD in jmpf Mp"))
+                        (let ((z (case eos ((16) 2) (else 4))))
+                          (emit
+                           `(let* ((addr ,location)
+                                   (off (RAM addr ,eos))
+                                   (seg (RAM ,(cg+ 'addr z) 16))
+                                   (cs ,(cgasl 'seg 4)))
+                              ,(return merge 'off)))))
                        ((PUSH)          ;push Ev
                         (emit (cg-push eos (cg-r/m-ref store location eos)
                                        (continue merge ip))))
