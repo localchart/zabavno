@@ -187,6 +187,19 @@
                  (set-CF)))))
            (else
             (not-implemented))))
+        ((#x14)
+         (case AH
+           ((#x00)
+            ;; Initialize serial port
+            (let ((parameters (bitwise-bit-field (machine-AX M) 0 8))
+                  (port (bitwise-bit-field (machine-DX M) 0 16)))
+              (when (machine-debug M)
+                (print "pcbios: initialize serial port " port " with parameters " parameters))
+              (machine-AX-set! M (bitwise-ior (bitwise-and (machine-AX M) (fxnot #xffff))
+                                              #x0000)) ; line/modem status
+              (clear-CF)))
+           (else
+            (not-implemented))))
         ((#x16)
          (case AH
            ((#x00)
@@ -195,7 +208,21 @@
                    (c (if (eof-object? c) (integer->char 26) c))) ;Ctrl-Z
               (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xffff))
                                         (fx* #x0101 (fxand (char->integer c) #xff))))
-              (clear-CF)))))
+              (clear-CF)))
+           (else
+            (not-implemented))))
+        ((#x17)
+         (case AH
+           ((#x01)
+            ;; Initialize parallel port.
+            (let ((port (bitwise-bit-field (machine-DX M) 0 16)))
+              (when (machine-debug M)
+                (print "pcbios: initialize parallel port " port))
+              (machine-AX-set! M (bitwise-ior (bitwise-and (machine-AX M) (bitwise-not #xffff00ff))
+                                              #x00)))
+            (clear-CF))
+           (else
+            (not-implemented))))
         ((#x19)
          ;; Bootstrap loader. Used to reboot the machine.
          (clear-CF)
