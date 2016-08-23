@@ -993,6 +993,7 @@
            ,k))))
 
   (define (cg-push* eos x . x*)
+    ;; TODO: A single stack bounds check?
     (if (null? x*)
         x
         (cg-push eos x (apply cg-push* eos x*))))
@@ -1092,8 +1093,8 @@
                           ,@(cgl-register-update idx-CX eas (cg- 'count 1)))
                      (if (or (eqv? ,(cg-register-ref idx-CX eas) 0)
                              ,(case repeat
-                                ((z) `(eqv? cmp-result 0))
-                                (else `(not (eqv? cmp-result 0)))))
+                                ((z) `(not (eqv? (fl-ZF) 0)))
+                                (else `(eqv? (fl-ZF) 0))))
                          ,k-continue
                          (lp CX DI SI (fx- iterations 1)))))
                  (else k-continue)))))))
@@ -1127,8 +1128,8 @@
                           ,@(cgl-register-update idx-CX eas (cg- 'count 1)))
                      (if (or (eqv? ,(cg-register-ref idx-CX eas) 0)
                              ,(case repeat
-                                ((z) `(eqv? cmp-result 0))
-                                (else `(not (eqv? cmp-result 0)))))
+                                ((z) `(not (eqv? (fl-ZF) 0)))
+                                (else `(eqv? (fl-ZF) 0))))
                          ,k-continue
                          (lp CX DI (fx- iterations 1)))))
                  (else k-continue)))))))
@@ -1541,18 +1542,22 @@
               (emit `(let* (,@(cgl-merge-fl merge))
                        (let* ((fl^ (fl)) ;FIXME: clean up. Force one point of fl evaluation.
                               (fl (lambda () fl^)))
-                         ,(cg-push eos 'fl^ (continue #f ip))))))
+                         ,(cg-push eos '(fl) (continue #f ip))))))
              ((#x9D)                    ; popfw / popfd
               (emit
                (cg-pop eos 'tmp
                        `(let ((fl (lambda ()
-                                    ;; Update the eos lower bits of flags.
+                                    ;; Update the eos lower bits of
+                                    ;; flags. Discard the fl-*
+                                    ;; procedures.
                                     ,(cgior flags-always-set
                                             (cgand (cgior 'tmp
                                                           (cgand '(fl) (bitwise-not
                                                                         (- (expt 2 eos) 1))))
                                                    (bitwise-not flags-never-set))))))
-                          ,(continue #f ip)))))
+                          ;; Need to return so that the fl-*
+                          ;; procedures will be reloaded.
+                          ,(return #f ip)))))
              ((#xA0 #xA1)                    ; mov *AL Ob, mov *rAX Ov
               (let ((eos (if (eqv? op #xA0) 8 eos)))
                 (with-instruction-immediate* ((addr <- cs ip eas))
@@ -1704,19 +1709,22 @@
               (let ((idt 0))            ;real mode interrupt vector table
                 (with-instruction-u8* ((vec <- cs ip))
                   (emit
-                   (cg-push* 16
-                             (cg-trunc '(fl) 16)
-                             '(fxarithmetic-shift-right cs 4)
-                             ip
-                             `(let* ((addr ,(cg+ idt (cgasl vec 2)))
-                                     (off (RAM addr 16))
-                                     (seg (RAM ,(cg+ 'addr 2) 16))
-                                     (cs ,(cgasl 'seg 4))
-                                     (fl (lambda ()
-                                           ,(cgand '(fl) (fxnot (fxior flag-IF
-                                                                       flag-TF
-                                                                       flag-AC))))))
-                                ,(return merge 'off)))))))
+                   `(let* (,@(cgl-merge-fl merge)
+                           (fl^ (fl)) ;FIXME: clean up. Force one point of fl evaluation.
+                           (fl (lambda () fl^)))
+                      ,(cg-push* 16
+                                 (cg-trunc '(fl) 16)
+                                 '(fxarithmetic-shift-right cs 4)
+                                 ip
+                                 `(let* ((addr ,(cg+ idt (cgasl vec 2)))
+                                         (off (RAM addr 16))
+                                         (seg (RAM ,(cg+ 'addr 2) 16))
+                                         (cs ,(cgasl 'seg 4))
+                                         (fl (lambda ()
+                                               ,(cgand '(fl) (fxnot (fxior flag-IF
+                                                                           flag-TF
+                                                                           flag-AC))))))
+                                    ,(return #f 'off))))))))
              ((#xCF)                    ; iret
               (emit (cg-pop* eos 'saved-ip 'saved-cs 'saved-flags
                              `(let ((cs ,(cgasl 'saved-cs 4))
@@ -1963,13 +1971,14 @@
              ;; with real hardware, and SMC is unusual).
              (let ((trans (generate-translation! translations cs ip debug instruction-limit)))
                (hashtable-set! translations address trans)
+               ;; FIXME: this is so buggy, since a new translation on the same line
+               ;; will mark other translations as valid. Should use a generation mark.
                (hashtable-set! validity line #t)
                trans)))))
 
   ;; There was an aligned write to the given address, invalidate any
   ;; cached translations.
   (define (invalidate-translation address)
-    ;; Right now this is done with a hashtable, but perhaps it should be a bit vector.
     (let ((validity (machine-translation-validity (current-machine)))
           (line (translation-line-number address)))
       (when (hashtable-contains? validity line)
