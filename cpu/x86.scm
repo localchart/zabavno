@@ -1463,8 +1463,14 @@
                                    ((TEST CMP) '())
                                    (else (cgl-r/m-set store location eos 'result))))
                           ,(continue #t ip))))))))
-             ;; ((#x84 #x85)    ; test Eb Gb, test Ev Gv
-             ;; )
+             ((#x84 #x85)    ; test Eb Gb, test Ev Gv
+              (let ((eos (if (eqv? op #x84) 8 eos)))
+                (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                  (emit
+                   `(let* ((v0 ,(cg-r/m-ref store location eos))
+                           (v1 ,(cg-reg-ref modr/m eos))
+                           ,@(cgl-arithmetic 'result #f eos 'TEST 'v0 'v1))
+                      ,(continue #t ip))))))
              ((#x86 #x87)               ; xchg Eb Gb, xchg Ev Gv
               (let ((eos (if (eqv? op #x86) 8 eos)))
                 (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
@@ -1922,6 +1928,11 @@
                      (unless (eqv? op #xFF)
                        (error 'generate-translation "TODO: raise #UD in group 5" operator))
                      (case operator
+                       ((CALL)          ; call Ev
+                        (emit
+                         (cg-push eas ip
+                                  `(let ((ip ,(cg-r/m-ref store location eos)))
+                                     ,(return merge (cg-trunc 'ip eas))))))
                        ((CALLF)         ; callf Mp
                         (unless (eq? store 'mem)
                           (error 'generate-translation "TODO: raise #UD in callf Mp"))
@@ -1933,6 +1944,10 @@
                                              (seg (RAM ,(cg+ 'addr z) 16))
                                              (cs ,(cgasl 'seg 4)))
                                         ,(return merge 'off))))))
+                       ((JMP)           ; jmp Ev
+                        (emit
+                         `(let* ((ip ,(cg-r/m-ref store location eos)))
+                            ,(return merge (cg-trunc 'ip eas)))))
                        ((JMPF)          ; jmpf Mp
                         (unless (eq? store 'mem)
                           (error 'generate-translation "TODO: raise #UD in jmpf Mp"))
