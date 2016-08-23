@@ -1098,6 +1098,41 @@
                          (lp CX DI SI (fx- iterations 1)))))
                  (else k-continue)))))))
 
+  (define (cg-scas dseg repeat eos eas k-restart k-continue)
+    ;; Reads from es:rDI(!) and compares with eAX, increments or
+    ;; decrements rDI. With repeat=z it repeats until rCX=0 or ZF=0,
+    ;; with repeat=nz it repeats until rCX=0 or ZF=1. For rDI/rCX eas
+    ;; is used. es can not be overridden.
+    (define n (/ eos 8))
+    (define (lp-maybe body)
+      (case repeat
+        ((z nz)
+         (assert k-restart)
+         `(let lp ((CX CX) (DI DI) (iterations ,(div 65 n)))
+            (cond ((eqv? iterations 0) ,k-restart)
+                  (else ,body))))
+        (else body)))
+    `(let* ((n ,(/ eos 8))
+            (n (if (fxzero? (fxand (fl) ,flag-DF)) n (fx- n)))
+            (comparant ,(cg-register-ref idx-AX eos)))
+       ,(lp-maybe
+         `(let ((src-addr ,(cg+ 'es (cg-register-ref idx-DI eas))))
+            (let* (,@(cgl-arithmetic 'cmp-result #f eos 'SUB
+                                     `(RAM src-addr ,eos)
+                                     'comparant)
+                   ,@(cgl-register-update idx-DI eas (cg+ 'DI 'n)))
+              ,(case repeat
+                 ((z nz)
+                  `(let* ((count ,(cg-register-ref idx-CX eas))
+                          ,@(cgl-register-update idx-CX eas (cg- 'count 1)))
+                     (if (or (eqv? ,(cg-register-ref idx-CX eas) 0)
+                             ,(case repeat
+                                ((z) `(eqv? cmp-result 0))
+                                (else `(not (eqv? cmp-result 0)))))
+                         ,k-continue
+                         (lp CX DI (fx- iterations 1)))))
+                 (else k-continue)))))))
+
   (define (cg-stos _dseg repeat eos eas k-restart k-continue)
     ;; Copies rAX to es:rDI, increments or decrements rDI.
     ;; With repeat=z it repeats until rCX=0. For rDI/rCX eas
@@ -1590,7 +1625,20 @@
                       (else
                        (emit
                         (cg-lods dseg #f eos eas #f (continue merge ip)))))))
-             ;; ((#xAE #xAF) scas)
+             ((#xAE #xAF)               ; scas *AL Yb, *rAX Yv
+              (let ((eos (if (eqv? op #xAE) 8 eos)))
+                (cond (repeat
+                       (cond ((not first?) ;finish all previous code
+                              (emit (return merge start-ip)))
+                             (else
+                              ;; TODO: scas updates flags, but it
+                              ;; would be nice to emit only a single
+                              ;; merge
+                              (emit (cg-scas dseg repeat eos eas
+                                             (return #t start-ip)
+                                             (return #t ip))))))
+                      (else
+                       (emit (cg-scas dseg #f eos eas #f (continue #t ip)))))))
              ((#xB0 #xB1 #xB2 #xB3 #xB4 #xB5 #xB6 #xB7 #xB8 #xB9 #xBA #xBB #xBC #xBD #xBE #xBF)
               ;; mov *AL/R8L...*BH/R15L Ib
               ;; mov *rAX/r8..*rDI/r15 Iv
@@ -1706,6 +1754,13 @@
                              ,(return #f (cgand #xffff (cg+ ip disp))))
                             (else
                              ,(return #f ip))))))))
+             ((#xE3)                    ; jcxz Jb, jecxz Jb
+              (with-instruction-s8* ((disp <- cs ip))
+                (emit
+                 `(let ((ip (if (eqv? ,(cg-register-ref idx-CX eas) 0)
+                                ,(cgand #xffff (cg+ ip disp))
+                                ,ip)))
+                    ,(return merge 'ip)))))
              ((#xE6 #xE7)               ; out Ib *AL, out Ib *eAX
               (let ((eos (if (eqv? op #xE6) 8 eos)))
                 (with-instruction-u8* ((imm <- cs ip))
