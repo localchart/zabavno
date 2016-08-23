@@ -280,6 +280,16 @@
  '((mov al #b10100000)
    (rol al 2))
 
+ ;; ROR.
+ '((mov al #b10000000)
+   (ror al 1))
+ '((mov al #b00000001)
+   (ror al 1))
+ '((mov al #b10000001)
+   (ror al 1))
+ '((mov ah #b10000001)
+   (ror ah 2))
+
  ;; SHL.
  '((mov ax #b10000000)
    (shl ax 1))

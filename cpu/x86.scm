@@ -894,6 +894,22 @@
                                    ,flag-CF
                                    0))))))
 
+      ((ROR)
+       `((t0 ,t0)
+         (t1 ,(cgand t1 #b00011111))
+         (tmp (bitwise-rotate-bit-field t0 0 ,eos ,(cg- eos 't1)))
+         (,result ,(cg-trunc 'tmp eos))
+         (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
+                                 ;; undefined if t1 > 1
+                                 ((not (eqv? ,(cgbit-set? 'tmp (fx- eos 1))
+                                             ,(cgbit-set? 'tmp (fx- eos 2))))
+                                  ,flag-OF)
+                                 (else 0))))
+         (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
+                               (if ,(cgbit-set? 't0 (fx- t1 1))
+                                   ,flag-CF
+                                   0))))))
+
       ((SBB)
        `((t0 ,t0)
          (t1 ,t1)
