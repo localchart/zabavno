@@ -1105,7 +1105,7 @@
     (define (lp-maybe . body)
       (case repeat
         ((z)
-         `(let lp ((CX CX) (DI DI) (SI SI) (iterations ,(div 65 n)))
+         `(let lp ((CX CX) (DI DI) (iterations ,(div 65 n)))
             (cond ((eqv? iterations 0) ,k-restart)
                   (else ,@body))))
         (else `(begin ,@body))))
@@ -1113,15 +1113,14 @@
        ,(lp-maybe
          `(let ((dst-addr ,(cg+ 'es (cg-register-ref idx-DI eas))))
             (RAM dst-addr ,eos ,(cg-register-ref idx-AX eos)))
-         `(let* (,@(cgl-register-update idx-DI eas (cg+ 'DI 'n))
-                 ,@(cgl-register-update idx-SI eas (cg+ 'SI 'n)))
+         `(let* (,@(cgl-register-update idx-DI eas (cg+ 'DI 'n)))
             ,(case repeat
                ((z)
                 `(let* ((count ,(cg-register-ref idx-CX eas))
                         ,@(cgl-register-update idx-CX eas (cg- 'count 1)))
                    (if (eqv? ,(cg-register-ref idx-CX eas) 0)
                        ,k-continue
-                       (lp CX DI SI (fx- iterations 1)))))
+                       (lp CX DI (fx- iterations 1)))))
                (else k-continue))))))
 
   ;; (expand/optimize
