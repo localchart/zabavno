@@ -975,6 +975,7 @@
       ;; The target is a temporary variable, the register/memory write
       ;; semantics are implemented by the caller.
       `(let* ((,target (RAM ,(cg+ 'ss 'SP) ,eos))
+              ;; FIXME: SP width depends the code segment flag D and is changed with eas
               ,@(cgl-register-update idx-SP eos (cg+ (cg-trunc 'SP eos) n)))
          ,k)))
 
@@ -1300,11 +1301,10 @@
                    (with-instruction-immediate-sx* ((disp <- cs ip eos))
                      (emit
                       `(let* (,@(cgl-merge-fl merge)) ;update fl early
-                         (let* ((fl^ (fl))   ;FIXME: clean up. Force one point of fl evaluation.
-                                (fl (lambda () fl^)))
-                           (if ,(cg-test-cc (fxand op1 #b1111))
-                               ,(return #f (cgand #xffff (cg+ ip disp)))
-                               ,(return #f ip)))))))
+                         (let ((ip (if ,(cg-test-cc (fxand op1 #b1111))
+                                       ,(cgand #xffff (cg+ ip disp))
+                                       ,ip)))
+                           ,(return #f 'ip))))))
                   (else
                    (if (not first?)
                        (emit (return merge start-ip))
@@ -1389,11 +1389,10 @@
               (with-instruction-s8* ((disp <- cs ip))
                 (emit
                  `(let* (,@(cgl-merge-fl merge)) ;update fl early
-                    (let* ((fl^ (fl))   ;FIXME: clean up. Force one point of fl evaluation.
-                           (fl (lambda () fl^)))
-                      (if ,(cg-test-cc (fxand op #b1111))
-                          ,(return #f (cgand #xffff (cg+ ip disp)))
-                          ,(return #f ip)))))))
+                    (let ((ip (if ,(cg-test-cc (fxand op #b1111))
+                                  ,(cgand #xffff (cg+ ip disp))
+                                  ,ip)))
+                      ,(return #f 'ip))))))
              ((#x80 #x81 #x82 #x83)
               ;; Group 1. Eb Ib, Ev Iz, Eb Ib, Ev IbS.
               (let ((eos (if (fxeven? op) 8 eos))
@@ -1639,12 +1638,20 @@
                       (else
                        (error 'run "TODO: raise #UD in Group 11" (hex op)
                               (hex modr/m))))))))
-             ((#xCB)                    ;retf
-              (emit (cg-pop eos 'off
-                            (cg-pop eos 'seg
-                                    `(let ((cs ,(cgasl (cgand 'seg #xffff) 4))
-                                           (ip ,(if (eqv? eos 32) 'off (cgand 'off #xffff))))
-                                       ,(return merge 'ip))))))
+             ((#xCA #xCB)               ; retf Iw / retf
+              (emit
+               (cg-pop* eos 'off 'seg
+                        `(let ((cs ,(cgasl (cgand 'seg #xffff) 4))
+                               (ip^ ,(if (eqv? eos 32) 'off (cgand 'off #xffff))))
+                           ,(case op
+                              ((#xCA)
+                               (with-instruction-u16* ((imm <- cs ip))
+                                 ;; pop imm bytes off the stack
+                                 `(let* (,@(cgl-register-update idx-SP eas (cg+ (cg-trunc 'SP eas)
+                                                                                imm)))
+                                    ,(return merge 'ip^))))
+                              (else
+                               (return merge 'ip^)))))))
              ((#xCD)                 ; int Ib
               (let ((idt 0))            ;real mode interrupt vector table
                 (with-instruction-u8* ((vec <- cs ip))
@@ -1663,14 +1670,12 @@
                                                                        flag-AC))))))
                                 ,(return merge 'off)))))))
              ((#xCF)                    ; iret
-              (emit (cg-pop eos 'saved-ip
-                            (cg-pop eos 'saved-cs
-                                    (cg-pop eos 'saved-flags
-                                            `(let ((cs ,(cgasl 'saved-cs 4))
-                                                   (fl (lambda ()
-                                                         ,(cgand 'saved-flags #xffff))))
-                                               ;; No need to merge the flags.
-                                               ,(return #f 'saved-ip)))))))
+              (emit (cg-pop* eos 'saved-ip 'saved-cs 'saved-flags
+                             `(let ((cs ,(cgasl 'saved-cs 4))
+                                    (fl (lambda ()
+                                          ,(cgand 'saved-flags #xffff))))
+                                ;; No need to merge the flags.
+                                ,(return #f 'saved-ip)))))
              ((#xD0 #xD1 #xD2 #xD3)
               ;; Shift Group 2. Eb 1, Ev 1, Eb *CL, Ev *CL.
               (let ((eos (if (fxeven? op) 8 eos)))
