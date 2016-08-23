@@ -86,7 +86,7 @@
   (define DEFAULT-MEMORY-FILL #xF1)
 
   (define pretty-print
-    (lambda (x) (write x) (newline)))
+    (lambda (x) (display x) (newline)))
 
   (define code-env (environment '(rnrs)))
 
@@ -1255,6 +1255,9 @@
                  cs ds ss es fs gs))))
        (define first? (eqv? instruction-count 0))
        (define start-ip ip)
+       (when (and debug disassemble)
+         (print (hex (segment-selector cs) 4) ":" (hex ip 4) "  "
+                (disassemble (copy-inst cs ip))))
        (let prefix ((ip ip)
                     (dseg 'ds)       ;segment for address calculations
                     (sseg 'ss)       ;segment for stack references
@@ -1972,10 +1975,7 @@
         ;; (display "@SS:BP: ")
         ;; (display-memory (fx+ ss BP) 16)
         (display "CS:IP: ")
-        (print-memory (fx+ cs ip) 16)
-        (when disassemble
-          (print (hex (segment-selector cs) 4) ":" (hex ip 4) "  "
-                 (disassemble (copy-inst cs ip)))))
+        (print-memory (fx+ cs ip) 16))
 
       (let ((trans (translate cs ip debug (if trace 1 32))))
         (let-values (((ip^ fl^ AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^
