@@ -28,11 +28,12 @@
         (zabavno loader pcboot)
         (zabavno loader doscom))
 
-(define (main filename enable-debug)
+(define (main filename enable-debug enable-trace)
   (let ((M (make-machine)))
     (with-machine M
       (lambda ()
         (machine-debug-set! M enable-debug)
+        (machine-trace-set! M enable-trace)
         (call-with-port (open-file-input-port filename)
           (lambda (p)
             (let ((bios-data (pcbios-setup)))
@@ -48,24 +49,27 @@
 
 (define (display-help)
   (display "The zabavno machine emulator test program\n\
-Usage: zabavno [--debug] <program-image>\n\
+Usage: zabavno [--debug] [--trace] <program-image>\n\
 The image may be a DOS .com file or a PC boot sector.\n"
            (current-error-port)))
 
 ;; Handle command line arguments.
 (let lp ((parameters (cdr (command-line)))
          (filename #f)
-         (enable-debug #f))
+         (enable-debug #f)
+         (enable-trace #f))
   (cond ((null? parameters)
          (cond (filename
-                (main filename enable-debug))
+                (main filename enable-debug enable-trace))
                (else
                 (display-help)
                 (exit 1))))
         ((equal? (car parameters) "--debug")
-         (lp (cdr parameters) filename #t))
+         (lp (cdr parameters) filename #t enable-trace))
+        ((equal? (car parameters) "--trace")
+         (lp (cdr parameters) filename enable-debug #t))
         ((not filename)
-         (lp (cdr parameters) (car parameters) enable-debug))
+         (lp (cdr parameters) (car parameters) enable-debug enable-trace))
         (else
          (display-help)
          (exit 1))))
