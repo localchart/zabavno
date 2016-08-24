@@ -57,7 +57,7 @@ The image may be a DOS .com file or a PC boot sector.\n"
 ;; Handle command line arguments.
 (let lp ((parameters (cdr (command-line)))
          (filename #f)
-         (program-args '())
+         (program-args "")
          (enable-debug #f)
          (enable-trace #f))
   (cond ((null? parameters)
@@ -71,7 +71,7 @@ The image may be a DOS .com file or a PC boot sector.\n"
         ((equal? (car parameters) "--args")
          (when (null? (cdr parameters))
            (help))
-         (lp (cddr parameters) filename (cdr parameters) enable-debug enable-trace))
+         (lp (cddr parameters) filename (cadr parameters) enable-debug enable-trace))
         ((not filename)
          (lp (cdr parameters) (car parameters) program-args enable-debug enable-trace))
         (else

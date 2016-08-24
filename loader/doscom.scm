@@ -55,16 +55,7 @@
       (memory-u8-set! (real-pointer cs #x0051) #x21)        ;21h
       (memory-u8-set! (real-pointer cs #x0052) #xCB)        ;RETF
       ;; PSP also contains the command line.
-      (let-values (((p extract) (open-bytevector-output-port)))
-        (let lp ((arg* command-line-arguments))
-          (cond ((null? arg*)
-                 (put-u8 p (char->integer #\return))
-                 (let* ((bv (extract))
-                        (len (fxmin #x7f (bytevector-length bv))))
-                   (memory-u8-set! (real-pointer cs #x0080) (fx- len 1))
-                   (copy-to-memory (real-pointer cs #x0081) bv 0 len)))
-                (else
-                 (put-bytevector p (string->utf8 (car arg*)))
-                 (unless (null? (cdr arg*))
-                   (put-u8 p (char->integer #\space)))
-                 (lp (cdr arg*)))))))))
+      (let* ((bv (string->utf8 (string-append command-line-arguments "\x0d;")))
+             (len (fxmin #x7f (bytevector-length bv))))
+        (memory-u8-set! (real-pointer cs #x0080) (fx- len 1))
+        (copy-to-memory (real-pointer cs #x0081) bv 0 len)))))
