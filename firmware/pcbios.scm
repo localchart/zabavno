@@ -227,13 +227,12 @@
          ;; Bootstrap loader. Used to reboot the machine.
          (clear-CF)
          'exit-dos)
-        ((#x20)
+        ((#x20)                         ;DOS
          ;; Terminate program. Used to exit the program.
          'exit-dos)
-        ((#x21)
+        ((#x21)                         ;DOS
          (case AH
-           ((#x09)
-            ;; Print a $-terminated string.
+           ((#x09)                      ; Print a $-terminated string.
             (let lp ((i (machine-DX M)))
               (let* ((addr (fx+ (fx* (machine-DS M) 16) i))
                      (char (integer->char (memory-u8-ref addr))))
@@ -243,23 +242,36 @@
                     (lp (fx+ i 1))))))
             (machine-AX-set! M (fxior #x0900 (char->integer #\$)))
             (clear-CF))
-           ((#x30)
-            ;; DOS version.
-            (machine-AX-set! M #x0000))
-           ((#x40)
-            ;; XXX: do something about BX.
-            (let ((file-handle (machine-BX M))
-                  (count (fxand (machine-CX M) #xFFFF)))
-              (do ((i 0 (+ i 1)))
-                  ((= i count)
-                                        ;FIXME: preserve eAX
-                   (machine-AX-set! M (machine-CX M)))
-                (let* ((addr (+ (* (machine-DS M) 16)
-                                (machine-DX M)
-                                i))
-                       (char (integer->char (memory-u8-ref addr))))
-                  (display char))))
+           ((#x30)                ; DOS version. Reports IBM DOS 5.00.
+            (machine-AX-set! M (bitwise-ior #x0005 (bitwise-and (machine-AX M)
+                                                                (bitwise-not #xffff))))
+            (machine-BX-set! M (bitwise-and (machine-BX M) (bitwise-not #xffff)))
+            (machine-CX-set! M (bitwise-and (machine-CX M) (bitwise-not #xffff)))
             (clear-CF))
+           ((#x40)                      ; write to file or device
+            (let ((file-handles (vector (current-input-port)
+                                        (current-output-port)
+                                        (current-error-port)))
+                  (file-handle (machine-BX M))
+                  (count (fxand (machine-CX M) #xFFFF)))
+              (cond ((or (not (< file-handle (vector-length file-handles)))
+                         (not (vector-ref file-handles file-handle))
+                         (not (output-port? (vector-ref file-handles file-handle))))
+                     (set-CF))
+                    (else
+                     (do ((port (vector-ref file-handles file-handle))
+                          (i 0 (+ i 1)))
+                         ((= i count)
+                          (machine-AX-set! M (bitwise-ior count
+                                                          (bitwise-and (machine-AX M)
+                                                                       (bitwise-not #xffff))))
+                          (flush-output-port port)
+                          (clear-CF))
+                       (let* ((addr (real-pointer (machine-DS M) (+ (machine-DX M) i)))
+                              (char (integer->char (memory-u8-ref addr))))
+                         (display char port)))))))
+           ((#x4C)                      ;terminate with return code
+            (exit (bitwise-bit-field (machine-AX M) 0 8)))
            (else
             (not-implemented))))
         (else

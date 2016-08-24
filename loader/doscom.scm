@@ -29,18 +29,42 @@
           (zabavno cpu x86))
 
   ;; Loads a DOS .com image into the current machine.
-  (define (load-dos-com-image image-port)
-    (let ((M (current-machine)))
+  (define (load-dos-com-image image-port command-line-arguments)
+    (let ((M (current-machine))
+          (cs #x07D2))
       ;; Load the .com image to cs:ip.
-      (machine-CS-set! M #x07D2)
+      (machine-CS-set! M cs)
       (machine-IP-set! M #x0100)
       (set-port-position! image-port 0)
-      (let ((boot-sector (get-bytevector-n image-port 65535)))
-        (copy-to-memory (real-pointer (machine-CS M) (machine-IP M)) boot-sector))
+      (let ((boot-sector (get-bytevector-n image-port (- #xffff #x100))))
+        (copy-to-memory (real-pointer cs (machine-IP M)) boot-sector))
       ;; Set registers for starting the image.
-      (machine-DS-set! M (machine-CS M))
-      (machine-ES-set! M (machine-CS M))
-      (machine-SS-set! M (machine-CS M))
-      (machine-SP-set! M #xFFFE)          ;stack at the end of the image
+      (machine-DS-set! M cs)
+      (machine-ES-set! M cs)
+      (machine-SS-set! M cs)
       ;; Return to address 0.
-      (memory-u16-set! (real-pointer (machine-SS M) (machine-SP M)) #x0000))))
+      (machine-SP-set! M #xFFFE)          ;stack at the end of the image
+      (memory-u16-set! (real-pointer (machine-SS M) (machine-SP M)) #x0000)
+      ;; Program Segment Prefix (PSP).
+      (copy-to-memory (real-pointer cs #x0000) (make-bytevector #x100 0))
+      (memory-u8-set! (real-pointer cs #x0000) #xCD)    ;INT
+      (memory-u8-set! (real-pointer cs #x0001) #x20)    ;20h
+      (memory-u16-set! (real-pointer cs #x0002) #xA000) ;top of memory?
+      (memory-u32-set! (real-pointer cs #x0038) #xFFFFFFFF) ;previous PSP
+      (memory-u8-set! (real-pointer cs #x0050) #xCD)        ;INT
+      (memory-u8-set! (real-pointer cs #x0051) #x21)        ;21h
+      (memory-u8-set! (real-pointer cs #x0052) #xCB)        ;RETF
+      ;; PSP also contains the command line.
+      (let-values (((p extract) (open-bytevector-output-port)))
+        (let lp ((arg* command-line-arguments))
+          (cond ((null? arg*)
+                 (put-u8 p (char->integer #\return))
+                 (let* ((bv (extract))
+                        (len (fxmin #x7f (bytevector-length bv))))
+                   (memory-u8-set! (real-pointer cs #x0080) (fx- len 1))
+                   (copy-to-memory (real-pointer cs #x0081) bv 0 len)))
+                (else
+                 (put-bytevector p (string->utf8 (car arg*)))
+                 (unless (null? (cdr arg*))
+                   (put-u8 p (char->integer #\space)))
+                 (lp (cdr arg*)))))))))

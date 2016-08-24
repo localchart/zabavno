@@ -28,7 +28,7 @@
         (zabavno loader pcboot)
         (zabavno loader doscom))
 
-(define (main filename enable-debug enable-trace)
+(define (main filename program-args enable-debug enable-trace)
   (let ((M (make-machine)))
     (with-machine M
       (lambda ()
@@ -41,35 +41,38 @@
                      (load-boot-sector p)
                      (pcbios-load-floppy-image bios-data 0 p)) ;drive A
                     (else
-                     (load-dos-com-image p)))
+                     (load-dos-com-image p program-args)))
               (let lp ()
                 (machine-run)                 ;run until ICEBP
                 (when (eq? (pcbios-post-emulator-exit bios-data M) 'continue-emulator)
                   (lp))))))))))
 
-(define (display-help)
+(define (help)
   (display "The zabavno machine emulator test program\n\
-Usage: zabavno [--debug] [--trace] <program-image>\n\
+Usage: zabavno [--debug] [--trace] [--args <program-args...>] <program-image>\n\
 The image may be a DOS .com file or a PC boot sector.\n"
-           (current-error-port)))
+           (current-error-port))
+  (exit 1))
 
 ;; Handle command line arguments.
 (let lp ((parameters (cdr (command-line)))
          (filename #f)
+         (program-args '())
          (enable-debug #f)
          (enable-trace #f))
   (cond ((null? parameters)
-         (cond (filename
-                (main filename enable-debug enable-trace))
-               (else
-                (display-help)
-                (exit 1))))
+         (when (not filename)
+           (help))
+         (main filename program-args enable-debug enable-trace))
         ((equal? (car parameters) "--debug")
-         (lp (cdr parameters) filename #t enable-trace))
+         (lp (cdr parameters) filename program-args #t enable-trace))
         ((equal? (car parameters) "--trace")
-         (lp (cdr parameters) filename enable-debug #t))
+         (lp (cdr parameters) filename program-args enable-debug #t))
+        ((equal? (car parameters) "--args")
+         (when (null? (cdr parameters))
+           (help))
+         (lp (cddr parameters) filename (cdr parameters) enable-debug #t))
         ((not filename)
-         (lp (cdr parameters) (car parameters) enable-debug enable-trace))
+         (lp (cdr parameters) (car parameters) program-args enable-debug enable-trace))
         (else
-         (display-help)
-         (exit 1))))
+         (help))))
