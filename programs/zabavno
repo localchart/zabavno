@@ -71,7 +71,7 @@ The image may be a DOS .com file or a PC boot sector.\n"
         ((equal? (car parameters) "--args")
          (when (null? (cdr parameters))
            (help))
-         (lp (cddr parameters) filename (cdr parameters) enable-debug #t))
+         (lp (cddr parameters) filename (cdr parameters) enable-debug enable-trace))
         ((not filename)
          (lp (cdr parameters) (car parameters) program-args enable-debug enable-trace))
         (else
