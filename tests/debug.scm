@@ -369,9 +369,9 @@
  '((clc) (cmc))
  '((stc) (cmc))
 
- ;; ;; F6 F7 TEST
- ;; '((mov bx #x1200) (test bh #b10))
- ;; '((mov bx #x1200) (test bh #b01))
+ ;; F6 F7 TEST
+ '((mov bx #x1200) (test bh #b10))
+ '((mov bx #x1200) (test bh #b01))
 
  ;; ;; F6 F7 MUL
  ;; '((mov ax 6) (mov dx 7) (mul dx))
@@ -381,4 +381,12 @@
  ;; ;; F6 F7 DIV
  ;; '((mov ax 42) (cwd) (mov cx 6) (div cx))
  ;; '((mov ax 42) (cwd) (mov cx 6) (div cl))
+
+ ;; XLATB.
+ '((mov di #x4042)
+   (push di)
+   (mov bx sp)
+   (mov al 1)
+   (xlatb)
+   (pop di))
  )

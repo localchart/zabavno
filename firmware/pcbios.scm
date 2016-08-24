@@ -23,6 +23,9 @@
 
 ;; Trivial PC BIOS firmware emulation
 
+;; See Ralph Brown's Interrupt List for documentation on what this is
+;; trying to be.
+
 (library (zabavno firmware pcbios)
   (export pcbios-setup
           pcbios-load-floppy-image
@@ -42,7 +45,7 @@
 
   (define (print . x)
     (for-each (lambda (x) (display x (current-error-port))) x)
-    (newline))
+    (newline (current-error-port)))
 
   ;; Converts from CHS format to LBA, for 1.44 MB floppies.
   (define (floppy-2880-chs->lba cylinder head sector)

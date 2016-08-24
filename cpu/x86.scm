@@ -1263,7 +1263,6 @@
   ;;     ,(cg-lods 'ds #f 8 16 '(values 'restart AX SI DI CX)
   ;;               '(values 'cont AX SI DI CX))))
 
-
   (define (cg-arithmetic-group op operator ip cs dseg sseg eos eas continue)
     (let ((subop (fwand op #x7)))
       (case (fxasr subop 1)
@@ -1304,6 +1303,20 @@
                 ,(continue #t ip)))))
         (else
          (assert #f)))))
+
+  (define (cg-int vec ip return)
+    ;; Software interrupt
+    (define idt 0)                   ;real mode interrupt vector table
+    (cg-push* 16 (cg-trunc '(fl) 16) '(fxarithmetic-shift-right cs 4) ip
+              `(let* ((addr ,(cg+ idt (cgasl vec 2)))
+                      (off (RAM addr 16))
+                      (seg (RAM ,(cg+ 'addr 2) 16))
+                      (cs ,(cgasl 'seg 4))
+                      (fl (lambda ()
+                            ,(cgand '(fl) (fxnot (fxior flag-IF
+                                                        flag-TF
+                                                        flag-AC))))))
+                 ,(return #f 'off))))
 
   ;; Translate a basic block. This procedure reads instructions at
   ;; cs:ip until it finds a branch of some kind (or something
@@ -1779,25 +1792,12 @@
                               (else
                                (return merge 'ip^)))))))
              ((#xCD)                 ; int Ib
-              (let ((idt 0))            ;real mode interrupt vector table
-                (with-instruction-u8* ((vec <- cs ip))
-                  (emit
-                   `(let* (,@(cgl-merge-fl merge)
-                           (fl^ (fl)) ;FIXME: clean up. Force one point of fl evaluation.
-                           (fl (lambda () fl^)))
-                      ,(cg-push* 16
-                                 (cg-trunc '(fl) 16)
-                                 '(fxarithmetic-shift-right cs 4)
-                                 ip
-                                 `(let* ((addr ,(cg+ idt (cgasl vec 2)))
-                                         (off (RAM addr 16))
-                                         (seg (RAM ,(cg+ 'addr 2) 16))
-                                         (cs ,(cgasl 'seg 4))
-                                         (fl (lambda ()
-                                               ,(cgand '(fl) (fxnot (fxior flag-IF
-                                                                           flag-TF
-                                                                           flag-AC))))))
-                                    ,(return #f 'off))))))))
+              (with-instruction-u8* ((vec <- cs ip))
+                (emit
+                 `(let* (,@(cgl-merge-fl merge)
+                         (fl^ (fl)) ;FIXME: clean up. Force one point of fl evaluation.
+                         (fl (lambda () fl^)))
+                    ,(cg-int vec ip return)))))
              ((#xCF)                    ; iret
               (emit (cg-pop* eos 'saved-ip 'saved-cs 'saved-flags
                              `(let ((cs ,(cgasl 'saved-cs 4))
@@ -1818,7 +1818,15 @@
                                                imm)
                              ,@(cgl-r/m-set store location eos 'result))
                         ,(continue #t ip)))))))
+             ((#xD7)                    ; xlatb
+              (emit
+               `(let* ((addr ,(cg+ dseg (cg+ (cg-register-ref idx-BX eas)
+                                             (cg-register-ref idx-AX 8))))
+                       (result (RAM addr 8))
+                       ,@(cgl-register-update idx-AX 8 'result))
+                  ,(continue merge ip))))
              ((#xE0 #xE1 #xE2)          ; loopnz Jb, loopz Jb, loop Jb
+              ;; TODO: If ip+disp = start-ip, then a loop can be emitted.
               (with-instruction-s8* ((disp <- cs ip))
                 ;; eas determines if CX or ECX is used.
                 (emit
@@ -1842,6 +1850,12 @@
                                 ,(cgand #xffff (cg+ ip disp))
                                 ,ip)))
                     ,(return merge 'ip)))))
+             ((#xE4 #xE5)               ; in *AL Ib, in *eAX Ib
+              (let ((eos (if (eqv? op #xE4) 8 eos)))
+                (with-instruction-u8* ((imm <- cs ip))
+                  (emit `(let* ((tmp (I/O ,imm ,eos))
+                                ,@(cgl-register-update idx-AX eos 'tmp))
+                           ,(continue merge ip))))))
              ((#xE6 #xE7)               ; out Ib *AL, out Ib *eAX
               (let ((eos (if (eqv? op #xE6) 8 eos)))
                 (with-instruction-u8* ((imm <- cs ip))
@@ -2034,7 +2048,7 @@
 
   (define (translation-line-number address)
     ;; A cached translation is invalidated if a write is performed in
-    ;; the same same aligned 128-byte line as an existing translation.
+    ;; the same aligned 128-byte line as an existing translation.
     (fxarithmetic-shift-right address 7))
 
   (define (generate-translation! translations cs ip debug instruction-limit)
@@ -2048,6 +2062,8 @@
              (eval trans code-env)))))
 
   (define (translate cs ip debug instruction-limit)
+    ;; TODO: only keep a fixed number of translations, and throw away
+    ;; the least recently used ones.
     (let* ((translations (machine-translations (current-machine)))
            (validity (machine-translation-validity (current-machine)))
            (address (fw+ cs ip))
