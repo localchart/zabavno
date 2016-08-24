@@ -274,6 +274,28 @@
  ;; '((mov ax #b10000000)
  ;;   (shr ax 1))
 
+ ;; RCL.
+ '((mov al #b10000000)
+   (stc)
+   (rcl al 1))
+ '((mov al #b10000000)
+   (clc)
+   (rcl al 1))
+ '((mov al #b10001111)
+   (stc)
+   (rcl al 2))
+
+ ;; RCR.
+ '((mov al #b10000000)
+   (stc)
+   (rcr al 1))
+ '((mov al #b10000000)
+   (clc)
+   (rcr al 1))
+ '((mov al #b10001111)
+   (stc)
+   (rcr al 2))
+
  ;; ROL.
  '((mov al #b10000000)
    (rol al 1))

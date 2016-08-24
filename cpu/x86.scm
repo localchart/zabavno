@@ -878,6 +878,41 @@
          (fl-PF (lambda () ,(cg-PF result)))
          (fl-CF (lambda () 0))))
 
+      ((RCL)
+       `((t0 ,t0)
+         (t1 ,(cgand t1 #b00011111))
+         (tmp (bitwise-rotate-bit-field ; CF becomes bit 0, all else shifted up
+               ,(cgior '(fl-CF) (cgasl 't0 1)) 0 ,(fx+ eos 1) ,(cg- 't1 1)))
+         (,result ,(cg-trunc 'tmp eos))
+         (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
+                                 ;; undefined if t1 > 1
+                                 ((not (eqv? ,(cgbit-set? 't0 (cg- eos 't1))
+                                             ,(cgbit-set? 'tmp (fx- eos 1))))
+                                  ,flag-OF)
+                                 (else 0))))
+         (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
+                               (if ,(cgbit-set? 't0 (cg- eos 't1))
+                                   ,flag-CF
+                                   0))))))
+
+      ((RCR)
+       `((t0 ,t0)
+         (t1 ,(cgand t1 #b00011111))
+         (tmp (bitwise-rotate-bit-field ; CF becomes bit 9, 17 or 33 of t0
+               ,(cgior 't0 (cgasl '(fl-CF) eos))
+               0 ,(fx+ eos 1) ,(cg- (fx+ eos 1) 't1)))
+         (,result ,(cg-trunc 'tmp eos))
+         (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
+                                 ;; undefined if t1 > 1
+                                 ((not (eqv? ,(cgbit-set? 'tmp (fx- eos 1))
+                                             ,(cgbit-set? 'tmp (fx- eos 2))))
+                                  ,flag-OF)
+                                 (else 0))))
+         (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
+                               (if ,(cgbit-set? 't0 (fx- t1 1))
+                                   ,flag-CF
+                                   0))))))
+
       ((ROL)
        `((t0 ,t0)
          (t1 ,(cgand t1 #b00011111))
