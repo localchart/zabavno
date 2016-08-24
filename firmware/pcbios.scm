@@ -79,7 +79,18 @@
                             (fxarithmetic-shift-left #b10 4)))) ;80x25 color
       (memory-u16-set! (real-pointer #x0040 #x0010) equipment))
     (memory-u16-set! (real-pointer #x0040 #x0013)
-                     (fxdiv (machine-memory-size (current-machine)) 1024))
+                     (div (* 640 1024) 1024)) ;640kB of low memory
+    ;; Populate the configuration table
+    (let ((configuration-table
+           '#vu8(#xF8 #x80 0            ;model, submodel, bios revision
+                      #b01100000        ;second 8259, RTC
+                      #b00000000
+                      #b00000000
+                      #b00000000
+                      #b00000000)))
+      (memory-u16-set! (real-pointer #xF000 #xE6F5)
+                       (bytevector-length configuration-table))
+      (copy-to-memory (real-pointer #xF000 (+ #xE6F5 2)) configuration-table))
     (make-bios))
 
   (define (pcbios-load-floppy-image bios-data drive-index image-port)
@@ -143,10 +154,9 @@
          (clear-CF))
         ((#x13)
          (case AH
-           ((#x00)
-            ;; Reset disk system.
+           ((#x00)                      ;reset disk system
             (clear-CF))
-           ((#x02)
+           ((#x02)                      ;read sectors into memory
             (let ((sectors (fxand (machine-AX M) #xff))
                   (cylinder (fxior (fxbit-field (machine-CX M) 8 16)
                                    (fxarithmetic-shift-left
@@ -188,6 +198,37 @@
                                  (set-status #x00 (fxdiv (bytevector-length blocks) 512))))))))
                 (else
                  (set-CF)))))
+           ((#x08)                      ;get drive parameters
+            (let ((drive (fxbit-field (machine-DX M) 0 7))
+                  (disk-drive? (fxbit-set? (machine-DX M) 7)))
+              (cond
+                ((or disk-drive? (> drive 0))
+                 (set-CF))
+                (else
+                 (let ((drive-type #x04) ;1.44M
+                       (maximum-cylinder-number 80)
+                       (maximum-sector-number 18)
+                       (maximum-head-number 2)
+                       (number-of-drives 1))
+                   (let ((ax 0)
+                         (bx drive-type)
+                         (cx (fxior
+                              (fxarithmetic-shift-left (fxbit-field maximum-cylinder-number 0 6) 8)
+                              (fxarithmetic-shift-left (fxbit-field maximum-cylinder-number 6 8) 5)
+                              (fxbit-field maximum-sector-number 0 5)))
+                         (dx (fxior
+                              (fxarithmetic-shift-left maximum-head-number 8)
+                              number-of-drives))
+                         ;; TODO: drive parameter table
+                         (es #xF000)
+                         (di #x0100))
+                     (machine-AX-set! M ax)
+                     (machine-BX-set! M bx)
+                     (machine-CX-set! M cx)
+                     (machine-DX-set! M dx)
+                     (machine-ES-set! M es)
+                     (machine-DI-set! M di)
+                     (clear-CF)))))))
            (else
             (not-implemented))))
         ((#x14)
@@ -203,10 +244,18 @@
               (clear-CF)))
            (else
             (not-implemented))))
+        ((#x15)
+         (case AH
+           ((#xC0)                      ;get configuration
+            (machine-ES-set! M #xF000)
+            (machine-BX-set! M #xE6F5)
+            (machine-AX-set! M (bitwise-and (machine-AX M) (fxnot #xff00)))
+            (clear-CF))
+           (else
+            (not-implemented))))
         ((#x16)
          (case AH
-           ((#x00)
-            ;; Get keystroke
+           ((#x00)                      ; get keystroke
             (let* ((c (get-char (current-input-port)))
                    (c (if (eof-object? c) (integer->char 26) c))) ;Ctrl-Z
               (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xffff))
@@ -229,7 +278,7 @@
         ((#x19)
          ;; Bootstrap loader. Used to reboot the machine.
          (clear-CF)
-         'exit-dos)
+         'reboot)
         ((#x20)                         ;DOS
          ;; Terminate program. Used to exit the program.
          'exit-dos)
