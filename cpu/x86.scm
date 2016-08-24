@@ -765,9 +765,9 @@
       (cgbit-set? (cgand (cgxor a result)
                          (cgxor b result))
                   (fx- result-width 1)))
-    (define (cg-AF a b)
+    (define (cg-AF cg% a b)
       ;; TODO: this is wrong.
-      `(if ,(cgbit-set? (cg+ (cgand a #b1111)
+      `(if ,(cgbit-set? (cg% (cgand a #b1111)
                              (cgand b #b1111))
                         4)
            ,flag-AF 0))
@@ -794,7 +794,7 @@
          (fl-OF (lambda () (if ,(cgadd-overflow? 't0 't1 result eos) ,flag-OF 0)))
          (fl-SF (lambda () ,(cg-SF result)))
          (fl-ZF (lambda () ,(cg-ZF result)))
-         (fl-AF (lambda () ,(cg-AF 't0 't1)))
+         (fl-AF (lambda () ,(cg-AF cg+ 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))
          (fl-CF (lambda () ,(cg-CF)))))
 
@@ -806,7 +806,7 @@
          (fl-OF (lambda () (if ,(cgadd-overflow? 't0 't1 result eos) ,flag-OF 0)))
          (fl-SF (lambda () ,(cg-SF result)))
          (fl-ZF (lambda () ,(cg-ZF result)))
-         (fl-AF (lambda () ,(cg-AF 't0 't1)))
+         (fl-AF (lambda () ,(cg-AF cg+ 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))
          (fl-CF (lambda () ,(cg-CF)))))
 
@@ -849,7 +849,7 @@
          (fl-OF (lambda () (if ,(cgadd-overflow? 't0 't1 result eos) ,flag-OF 0)))
          (fl-SF (lambda () ,(cg-SF result)))
          (fl-ZF (lambda () ,(cg-ZF result)))
-         (fl-AF (lambda () ,(cg-AF 't0 't1)))
+         (fl-AF (lambda () ,(cg-AF cg+ 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))))
 
       ((MUL)
@@ -865,6 +865,22 @@
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () 0))          ;undefined
          (fl-CF (lambda () (if (>= ,result ,(expt 2 eos)) ,flag-CF 0)))))
+
+      ((NEG)
+       `((t0 ,t0)
+         (tmp ,(cg- 0 't0))
+         (,result ,(cg-trunc 'tmp eos))
+         (fl-OF (lambda () (if ,(cgsub-overflow? 0 't0 result eos) ,flag-OF 0)))
+         (fl-SF (lambda () ,(cg-SF result)))
+         (fl-ZF (lambda () ,(cg-ZF result)))
+         (fl-AF (lambda () ,(cg-AF cg- 0 't0)))
+         (fl-PF (lambda () ,(cg-PF result)))
+         (fl-CF (lambda () (if (eqv? t0 0) 0 ,flag-CF)))))
+
+      ((NOT)
+       `((t0 ,t0)
+         (tmp ,(cgxor 't0 (- (expt 2 eos) 1)))
+         (,result ,(cg-trunc 'tmp eos))))
 
       ((OR)
        `((t0 ,t0)
@@ -953,7 +969,7 @@
          (fl-OF (lambda () (if ,(cgsub-overflow? 't0 't1 result eos) ,flag-OF 0)))
          (fl-SF (lambda () ,(cg-SF result)))
          (fl-ZF (lambda () ,(cg-ZF result)))
-         (fl-AF (lambda () ,(cg-AF 't0 't1)))
+         (fl-AF (lambda () ,(cg-AF cg- 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))
          (fl-CF (lambda () ,(cg-CF)))))
 
@@ -989,7 +1005,7 @@
                                  (else 0))))
          (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result))))
          (fl-ZF (lambda () (if (eqv? t1 0) (fl-ZF) ,(cg-ZF result))))
-         (fl-AF (lambda () (if (eqv? t1 0) (fl-AF) 0)))
+         (fl-AF (lambda () (if (eqv? t1 0) (fl-AF) ,flag-AF))) ;undefined
          (fl-PF (lambda () (if (eqv? t1 0) (fl-PF) ,(cg-PF result))))
          (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
                                (if ,(cgbit-set? 't0 (cg- 't1 1))
@@ -1004,7 +1020,7 @@
          (fl-OF (lambda () (if ,(cgsub-overflow? 't0 't1 result eos) ,flag-OF 0)))
          (fl-SF (lambda () ,(cg-SF result)))
          (fl-ZF (lambda () ,(cg-ZF result)))
-         (fl-AF (lambda () ,(cg-AF 't0 't1)))
+         (fl-AF (lambda () ,(cg-AF cg- 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))
          (fl-CF (lambda () ,(cg-CF)))))
 
@@ -1875,6 +1891,16 @@
                          (emit
                           `(let* (,@(cgl-arithmetic 'result #f eos 'TEST input imm))
                              ,(continue #t ip)))))
+                      ((NOT)
+                       (emit
+                        `(let* (,@(cgl-arithmetic 'result #f eos 'NOT input #f)
+                                ,@(cgl-r/m-set store location eos 'result))
+                           ,(continue #t ip))))
+                      ((NEG)
+                       (emit
+                        `(let* (,@(cgl-arithmetic 'result #f eos 'NEG input #f)
+                                ,@(cgl-r/m-set store location eos 'result))
+                           ,(continue #t ip))))
                       ((MUL)
                        ;; Unsigned multiplication.
                        (emit

@@ -265,14 +265,12 @@
    (%u8 #xf3 #xa6))
 
  ;; SHR.
- ;; '((mov ax #b0)
- ;;   (shr ax 1))
-
- ;; '((mov ax #b1)
- ;;   (shr ax 1))
-
- ;; '((mov ax #b10000000)
- ;;   (shr ax 1))
+ '((mov ax #b0)
+   (shr ax 1))
+ '((mov ax #b1)
+   (shr ax 1))
+ '((mov ax #b10000000)
+   (shr ax 1))
 
  ;; RCL.
  '((mov al #b10000000)
@@ -311,6 +309,20 @@
    (ror al 1))
  '((mov ah #b10000001)
    (ror ah 2))
+
+ ;; NEG.
+ '((mov al #b00000001)
+   (neg al))
+ `((mov al ,(fxand -127 #xff))
+   (neg al))
+ `((mov al 0)
+   (neg al))
+
+ ;; NOT.
+ '((mov al #b00000000)
+   (not al))
+ `((mov al #b11111111)
+   (not al))
 
  ;; SHL.
  '((mov ax #b10000000)
