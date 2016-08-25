@@ -1421,6 +1421,12 @@
                                        ,(cgand #xffff (cg+ ip disp))
                                        ,ip)))
                            ,(return #f 'ip))))))
+                  ((#xB6 #xB7)          ; movzx Gv Eb, movzx Gv Ew
+                   (let ((os (if (eqv? op1 #xB6) 8 16)))
+                     (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                       (emit
+                        `(let* (,@(cgl-reg-set modr/m eos (cg-r/m-ref store location os)))
+                           ,(continue merge ip))))))
                   (else
                    (if (not first?)
                        (emit (return merge start-ip))
@@ -1544,7 +1550,7 @@
                            ,@(cgl-r/m-set store location eos 'v1)
                            ,@(cgl-reg-set modr/m eos 'v0))
                       ,(continue merge ip))))))
-            ((#x88 #x89)               ; mov Eb Gb, mov Ev Gv
+             ((#x88 #x89)               ; mov Eb Gb, mov Ev Gv
               (let ((eos (if (eqv? op #x88) 8 eos)))
                 (with-r/m-operand ((ip store location modr/m)
                                    (cs ip dseg sseg eas))
@@ -1651,12 +1657,12 @@
                    `(let* (,@(cgl-register-update idx-AX eos `(RAM ,(cg+ dseg addr) ,eos)))
                       ,(continue merge ip))))))
              ((#xA2 #xA3)               ; mov Ob *AL, mov Ov *rAX
-             (let ((eos (if (eqv? op #xA2) 8 eos)))
-               (with-instruction-immediate* ((addr <- cs ip eas))
-                 (emit
-                  `(begin
-                     (RAM ,(cg+ dseg addr) ,eos ,(cg-register-ref idx-AX eos))
-                     ,(continue merge ip))))))
+              (let ((eos (if (eqv? op #xA2) 8 eos)))
+                (with-instruction-immediate* ((addr <- cs ip eas))
+                  (emit
+                   `(begin
+                      (RAM ,(cg+ dseg addr) ,eos ,(cg-register-ref idx-AX eos))
+                      ,(continue merge ip))))))
              ((#xA4 #xA5)               ; movs Yb Xb, movs Yv Xv
               (let ((eos (if (eqv? op #xA4) 8 eos)))
                 (cond ((and repeat (not first?))
@@ -1928,7 +1934,7 @@
                               (else
                                ;; DX:AX <- AX * input
                                ;; EDX:EAX <- EAX * input
-                               ;FIXME: this can use result:u.
+                                        ;FIXME: this can use result:u.
                                `(let* (,@(cgl-register-update idx-AX eos
                                                               (cgand 'result (- (expt 2 eos) 1)))
                                        ,@(cgl-register-update idx-DX eos

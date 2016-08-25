@@ -367,7 +367,6 @@
                            (else #f))
                          =>
                          (lambda (opener)
-
                            (vector-set! (bios-file-handles bios-data) fh
                                         (opener filename (file-options no-create no-truncate)))
                            (bios-next-fh-set! bios-data (+ fh 1))

@@ -353,6 +353,12 @@
  '((xor ax ax) (mov ax cs))
  '((mov ax #x700) (mov es ax))
 
+ ;; MOVZX
+ '((mov al #x7f)
+   (movzx ax al))
+ '((mov al #x80)
+   (movzx bx al))
+
  ;; PUSH, POP
  '((push #x100) (pop ax))
  '((push #x-10) (pop di))
