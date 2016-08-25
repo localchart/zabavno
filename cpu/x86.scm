@@ -1137,8 +1137,8 @@
     ;; is used. es can not be overridden.
     (define n (/ eos 8))
     (define (lp-maybe body)
-      (case repeat
-        ((z nz)
+      (cond
+        (repeat
          (assert k-restart)
          `(let lp ((CX CX) (DI DI) (SI SI) (iterations ,(div 65 n)))
             (cond ((eqv? iterations 0) ,k-restart)
@@ -1160,7 +1160,7 @@
                           ,@(cgl-register-update idx-CX eas (cg- 'count 1)))
                      (if (or (eqv? ,(cg-register-ref idx-CX eas) 0)
                              ,(case repeat
-                                ((z) `(not (eqv? (fl-ZF) 0)))
+                                ((nz) `(not (eqv? (fl-ZF) 0)))
                                 (else `(eqv? (fl-ZF) 0))))
                          ,k-continue
                          (lp CX DI SI (fx- iterations 1)))))
@@ -1173,8 +1173,8 @@
     ;; is used. es can not be overridden.
     (define n (/ eos 8))
     (define (lp-maybe body)
-      (case repeat
-        ((z nz)
+      (cond
+        (repeat
          (assert k-restart)
          `(let lp ((CX CX) (DI DI) (iterations ,(div 65 n)))
             (cond ((eqv? iterations 0) ,k-restart)
@@ -1186,8 +1186,8 @@
        ,(lp-maybe
          `(let ((src-addr ,(cg+ 'es (cg-register-ref idx-DI eas))))
             (let* (,@(cgl-arithmetic 'cmp-result #f eos 'SUB
-                                     `(RAM src-addr ,eos)
-                                     'comparant)
+                                     'comparant
+                                     `(RAM src-addr ,eos))
                    ,@(cgl-register-update idx-DI eas (cg+ 'DI 'n)))
               ,(case repeat
                  ((z nz)
@@ -1195,7 +1195,7 @@
                           ,@(cgl-register-update idx-CX eas (cg- 'count 1)))
                      (if (or (eqv? ,(cg-register-ref idx-CX eas) 0)
                              ,(case repeat
-                                ((z) `(not (eqv? (fl-ZF) 0)))
+                                ((nz) `(not (eqv? (fl-ZF) 0)))
                                 (else `(eqv? (fl-ZF) 0))))
                          ,k-continue
                          (lp CX DI (fx- iterations 1)))))
@@ -1584,7 +1584,7 @@
                 (unless (eqv? (ModR/M-reg modr/m) 0)
                   (error 'generate-translation "TODO: raise #UD in Group 1A"))
                 (emit (cg-pop eos 'tmp
-                              `(let (,@(cgl-r/m-set store location eos 'tmp))
+                              `(let* (,@(cgl-r/m-set store location eos 'tmp))
                                  ,(continue merge ip))))))
              ((#x90)                    ; nop
               (emit (continue merge ip)))
@@ -1761,8 +1761,8 @@
                   (emit
                    `(let ((seg (RAM ,(cg+ location off-size) 16))
                           (off (RAM ,location ,eos)))
-                      (let (,@(cgl-reg-set modr/m eos 'off)
-                            (,(if (eqv? op #xC4) 'es 'ds) ,(cgasl 'seg 4)))
+                      (let* (,@(cgl-reg-set modr/m eos 'off)
+                             (,(if (eqv? op #xC4) 'es 'ds) ,(cgasl 'seg 4)))
                         ,(continue merge ip)))))))
              ((#xC6 #xC7)               ; Group 11
               (let ((eos (if (eqv? op #xC6) 8 eos)))
