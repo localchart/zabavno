@@ -36,12 +36,19 @@
           #;(weinholt text hexdump))
 
   (define-record-type bios
-    (fields floppy-drives disk-drives)
+    (fields floppy-drives disk-drives
+            ;; DOS
+            file-handles (mutable next-fh))
     (protocol
      (lambda (p)
        (lambda ()
-         (p (make-vector 2 #f)
-            (make-vector 24 #f))))))
+         (let ((file-handles (make-vector 16 #f)))
+           (vector-set! file-handles 0 (current-input-port))
+           (vector-set! file-handles 1 (current-output-port))
+           (vector-set! file-handles 2 (current-error-port))
+           (p (make-vector 2 #f)
+              (make-vector 24 #f)
+              file-handles 3))))))
 
   (define (print . x)
     (for-each (lambda (x) (display x (current-error-port))) x)
@@ -110,6 +117,21 @@
                   (machine-IP-set! M #x100) ;Points at IRET
                   'continue-emulator)))
           (else 'exit-emulator)))
+
+  (define (port-file-size port)
+    ;; XXX: This is the only portable way to do this in R6RS Scheme,
+    ;; unfortunately. Would need compatibility wrappers for a few
+    ;; different schemes.
+    (let ((old-position (port-position port)))
+      (set-port-position! port 0)
+      (let ((bv (make-bytevector 65536)))
+        (let lp ((size 0))
+          (let ((n (get-bytevector-n! port bv 0 (bytevector-length bv))))
+            (cond ((eof-object? n)
+                   (set-port-position! port old-position)
+                   size)
+                  (else
+                   (lp (+ size n)))))))))
 
   ;; Handle a BIOS interrupt.
   (define (pcbios-interrupt bios-data M vec)
@@ -300,10 +322,108 @@
             (machine-BX-set! M (bitwise-and (machine-BX M) (bitwise-not #xffff)))
             (machine-CX-set! M (bitwise-and (machine-CX M) (bitwise-not #xffff)))
             (clear-CF))
+           ((#x3C)                      ; create or truncate file
+            (let-values (((p extract) (open-bytevector-output-port)))
+              (do ((addr (real-pointer (machine-DS M) (bitwise-and (machine-DX M) #xffff))
+                         (+ addr 1))
+                   (limit 128 (- limit 1)))
+                  ((or (eqv? (memory-u8-ref addr) 0) (zero? limit)))
+                (put-u8 p (memory-u8-ref addr)))
+              (let ((filename (utf8->string (extract)))
+                    (attrs (bitwise-and (machine-CX M) #xffff))
+                    (fh (bios-next-fh bios-data)))
+                (when (machine-debug M)
+                  (print "pcbios: create " filename " => " fh " with attributes " attrs))
+                (guard (exn
+                        ((i/o-error? exn)
+                         (print "pcbios: failed to create/truncate " filename)
+                         (set-CF)))
+                  (vector-set! (bios-file-handles bios-data) fh
+                               (open-file-output-port filename (file-options no-fail)))
+                  (bios-next-fh-set! bios-data (+ fh 1))
+                  (machine-AX-set! M (bitwise-ior fh (bitwise-and (machine-AX M)
+                                                                  (fxnot #xffff))))
+                  (clear-CF)))))
+           ((#x3D)                      ; open existing file
+            (let-values (((p extract) (open-bytevector-output-port)))
+              (do ((addr (real-pointer (machine-DS M) (bitwise-and (machine-DX M) #xffff))
+                         (+ addr 1))
+                   (limit 128 (- limit 1)))
+                  ((or (eqv? (memory-u8-ref addr) 0) (zero? limit)))
+                (put-u8 p (memory-u8-ref addr)))
+              (let ((filename (utf8->string (extract)))
+                    (modes (bitwise-and (machine-AX M) #xff))
+                    (fh (bios-next-fh bios-data)))
+                (when (machine-debug M)
+                  (print "pcbios: open " filename " => " fh " with modes " modes))
+                (guard (exn
+                        ((i/o-error? exn)
+                         (print "pcbios: failed to open " filename)
+                         (set-CF)))
+                  (cond ((case (fxbit-field modes 0 3)
+                           ((#b000) open-file-input-port)
+                           ((#b001) open-file-output-port)
+                           ((#b010) open-file-input/output-port)
+                           (else #f))
+                         =>
+                         (lambda (opener)
+
+                           (vector-set! (bios-file-handles bios-data) fh
+                                        (opener filename (file-options no-create no-truncate)))
+                           (bios-next-fh-set! bios-data (+ fh 1))
+                           (machine-AX-set! M (bitwise-ior fh (bitwise-and (machine-AX M)
+                                                                           (fxnot #xffff))))
+                           (clear-CF)))
+                        (else
+                         (set-CF)))))))
+           ((#x3E)                      ; close file
+            (let ((file-handles (bios-file-handles bios-data))
+                  (file-handle (machine-BX M)))
+              (cond
+                ((or (not (< file-handle (vector-length file-handles)))
+                     (not (vector-ref file-handles file-handle))
+                     (not (input-port? (vector-ref file-handles file-handle))))
+                 (set-CF))
+                (else
+                 ;; TODO: handle errors
+                 (let ((port (vector-ref file-handles file-handle)))
+                   (when (machine-debug M)
+                     (print "pcbios: close fh " file-handle))
+                   (guard (exn
+                           ((i/o-error? exn)
+                            (set-CF)))
+                     (close-port port)
+                     (clear-CF)))))))
+           ((#x3F)                      ; read from file or device
+            (let ((file-handles (bios-file-handles bios-data))
+                  (file-handle (machine-BX M))
+                  (count (bitwise-and (machine-CX M) #xFFFF))
+                  (buffer (real-pointer (machine-DS M) (bitwise-and (machine-DX M) #xFFFF))))
+              (cond
+                ((or (not (< file-handle (vector-length file-handles)))
+                     (not (vector-ref file-handles file-handle))
+                     (not (input-port? (vector-ref file-handles file-handle))))
+                 (set-CF))
+                (else
+                 ;; TODO: handle errors, textual input ports, and CON stops at CR
+                 (let* ((port (vector-ref file-handles file-handle))
+                        (bv (get-bytevector-n port count)))
+                   (when (machine-debug M)
+                     (print "pcbios: read fh " file-handle ", "
+                            (or (eof-object? bv) (bytevector-length bv))
+                            " bytes into buffer " buffer " of size " count))
+                   (cond ((eof-object? bv)
+                          (machine-AX-set! M (bitwise-and (machine-AX M)
+                                                          (fxnot #xFFFF)))
+                          (clear-CF))
+                         (else
+                          (copy-to-memory buffer bv) ;XXX: does not wrap the segment
+                          (machine-AX-set! M (bitwise-ior (bitwise-and (machine-AX M)
+                                                                       (fxnot #xFFFF))
+                                                          (bytevector-length bv)))
+                          (clear-CF))))))))
            ((#x40)                      ; write to file or device
-            (let ((file-handles (vector (current-input-port)
-                                        (current-output-port)
-                                        (current-error-port)))
+            (let ((file-handles (bios-file-handles bios-data))
                   (file-handle (machine-BX M))
                   (count (fxand (machine-CX M) #xFFFF)))
               (cond ((or (not (< file-handle (vector-length file-handles)))
@@ -311,6 +431,10 @@
                          (not (output-port? (vector-ref file-handles file-handle))))
                      (set-CF))
                     (else
+                     (when (and (machine-debug M) (>= file-handle 3))
+                       (print "pcbios: write fh " file-handle ", "
+                              count " bytes from buffer "
+                              (real-pointer (machine-DS M) (+ (machine-DX M)))))
                      (do ((port (vector-ref file-handles file-handle))
                           (i 0 (+ i 1)))
                          ((= i count)
@@ -320,8 +444,40 @@
                           (flush-output-port port)
                           (clear-CF))
                        (let* ((addr (real-pointer (machine-DS M) (+ (machine-DX M) i)))
-                              (char (integer->char (memory-u8-ref addr))))
-                         (display char port)))))))
+                              (byte (memory-u8-ref addr)))
+                         (cond ((< file-handle 3)
+                                (put-char port (integer->char byte)))
+                               (else
+                                (put-u8 port byte)))))))))
+           ((#x42)                      ; set current file position
+            (let ((file-handles (bios-file-handles bios-data))
+                  (file-handle (machine-BX M))
+                  (whence (bitwise-and (machine-AX M) #xFF))
+                  (offset-u32
+                   (bitwise-ior
+                    (bitwise-arithmetic-shift-left (bitwise-and (machine-CX M) #xFFFF) 16)
+                    (bitwise-and (machine-DX M) #xFFFF)))
+                  (bv (make-bytevector 4)))
+              (bytevector-u32-native-set! bv 0 offset-u32)
+              (cond ((or (not (< file-handle (vector-length file-handles)))
+                         (not (vector-ref file-handles file-handle))
+                         (not (port? (vector-ref file-handles file-handle))))
+                     (set-CF))
+                    (else
+                     (let ((offset (bytevector-s32-native-ref bv 0))
+                           (port (vector-ref file-handles file-handle)))
+                       (when (machine-debug M)
+                         (print "pcbios: seek fh " file-handle " by " offset ", whence " whence))
+                       (case whence
+                         ((#x00)
+                          (set-port-position! port offset)
+                          (clear-CF))
+                         ((#x01)
+                          (set-port-position! port (+ (port-position port) offset))
+                          (clear-CF))
+                         (else
+                          (set-port-position! port (+ (port-file-size port) offset))
+                          (clear-CF))))))))
            ((#x4C)                      ;terminate with return code
             (exit (bitwise-bit-field (machine-AX M) 0 8)))
            (else
