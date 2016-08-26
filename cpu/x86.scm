@@ -1054,6 +1054,7 @@
   (define (cg-push eos expr k)
     (let ((n (/ eos 8)))
       `(begin
+         ;; TODO: Use cg-int-stack (it needs merge, start-ip, return)
          (assert (not (eqv? SP 1)))
          (let* (,@(cgl-register-update idx-SP eos (cg- 'SP n))
                 (_ (RAM ,(cg+ 'ss (cg-trunc 'SP eos)) ,eos ,(cg-trunc expr eos))))
@@ -1304,19 +1305,48 @@
         (else
          (assert #f)))))
 
-  (define (cg-int vec ip return)
-    ;; Software interrupt
+  ;; Generate code for a software interrupt, fault or trap.
+  (define (%cg-int vec error-code return merge ip)
     (define idt 0)                   ;real mode interrupt vector table
-    (cg-push* 16 (cg-trunc '(fl) 16) '(fxarithmetic-shift-right cs 4) ip
-              `(let* ((addr ,(cg+ idt (cgasl vec 2)))
-                      (off (RAM addr 16))
-                      (seg (RAM ,(cg+ 'addr 2) 16))
-                      (cs ,(cgasl 'seg 4))
-                      (fl (lambda ()
-                            ,(cgand '(fl) (fxnot (fxior flag-IF
-                                                        flag-TF
-                                                        flag-AC))))))
-                 ,(return #f 'off))))
+    (let ((code
+           (cg-push* 16 (cg-trunc '(fl) 16) '(fxarithmetic-shift-right cs 4) ip
+                     `(let* (,@(cgl-merge-fl merge)
+                             (fl^ (fl)) ;FIXME: clean up. Force one point of fl evaluation.
+                             (fl (lambda () fl^))
+                             (addr ,(cg+ idt (cgasl vec 2)))
+                             (off (RAM addr 16))
+                             (seg (RAM ,(cg+ 'addr 2) 16))
+                             (cs ,(cgasl 'seg 4))
+                             (fl (lambda ()
+                                   ,(cgand '(fl) (fxnot (fxior flag-IF
+                                                               flag-TF
+                                                               flag-AC))))))
+                        ,(return #f 'off)))))
+      (if error-code
+          (cg-push 16 error-code code)
+          code)))
+
+  (define (cg-int-software-interrupt vec return merge ip)
+    (%cg-int vec #f return merge ip))
+
+  ;; Various traps/faults that in general are restartable.
+  (define (cg-int-divide-by-zero-error return merge start-ip)
+    (%cg-int 0 #f return merge start-ip)) ;#DE
+
+  (define (cg-int-breakpoint return merge ip)
+    (%cg-int 3 #f return merge ip))     ;#BP
+
+  (define (cg-int-overflow return merge ip)
+    (%cg-int 4 #f return merge ip))     ;#OF
+
+  (define (cg-int-invalid-opcode return merge start-ip)
+    (%cg-int 6 #f return merge start-ip)) ;#UD
+
+  (define (cg-int-device-not-available return merge start-ip)
+    (%cg-int 7 #f return merge start-ip)) ;#NM
+
+  (define (cg-int-stack return merge start-ip)
+    (%cg-int 12 0 return merge start-ip)) ;#SS
 
   ;; Translate a basic block. This procedure reads instructions at
   ;; cs:ip until it finds a branch of some kind (or something
@@ -1430,7 +1460,7 @@
                   (else
                    (if (not first?)
                        (emit (return merge start-ip))
-                       (error 'generate-translation "Unimplemented instruction" cs ip op op1))))))
+                       (emit (cg-int-invalid-opcode return merge start-ip)))))))
 
              ((#x10 #x11 #x12 #x13 #x14 #x15)
               (emit (cg-arithmetic-group op 'ADC ip cs dseg sseg eos eas continue)))
@@ -1566,32 +1596,34 @@
                       ,(continue merge ip))))))
              ((#x8C)                    ; mov Ev Sw
               (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
-                (let ((src (or (vector-ref '#(es cs ss ds fs gs #f #f) (ModR/M-reg modr/m))
-                               (error 'generate-translation "TODO: raise #UD in mov Ev Sw"))))
+                (let ((src (vector-ref '#(es cs ss ds fs gs #f #f) (ModR/M-reg modr/m))))
                   (emit
-                   `(let* (,@(cgl-r/m-set store location eos (cgasr src 4)))
-                      ,(continue merge ip))))))
+                   (if src
+                       `(let* (,@(cgl-r/m-set store location eos (cgasr src 4)))
+                          ,(continue merge ip))
+                       (cg-int-invalid-opcode return merge start-ip))))))
              ((#x8D)                    ; lea Gv M
               (with-r/m-operand ((ip store location modr/m) (cs ip 0 0 eas))
-                (unless (eq? store 'mem)
-                  (error 'generate-translation "TODO: raise #UD on register ref in LEA"))
                 (emit
-                 `(let* (,@(cgl-reg-set modr/m eos location))
-                    ,(continue merge ip)))))
+                 (if (eq? store 'mem)
+                     `(let* (,@(cgl-reg-set modr/m eos location))
+                        ,(continue merge ip))
+                     (cg-int-invalid-opcode return merge start-ip)))))
              ((#x8E)                    ; mov Sw Ew
               (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
-                (let ((reg (or (vector-ref '#(es #f ss ds fs gs #f #f) (ModR/M-reg modr/m))
-                               (error 'generate-translation "TODO: raise #UD in mov Sw Ew"))))
+                (let ((reg (vector-ref '#(es #f ss ds fs gs #f #f) (ModR/M-reg modr/m))))
                   (emit
-                   `(let* ((,reg ,(cgasl (cg-r/m-ref store location 16) 4)))
-                      ,(continue merge ip))))))
+                   (if reg
+                       `(let* ((,reg ,(cgasl (cg-r/m-ref store location 16) 4)))
+                          ,(continue merge ip))
+                       (cg-int-invalid-opcode return merge start-ip))))))
              ((#x8F)                    ; Group 1A - pop Ev
               (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
-                (unless (eqv? (ModR/M-reg modr/m) 0)
-                  (error 'generate-translation "TODO: raise #UD in Group 1A"))
-                (emit (cg-pop eos 'tmp
-                              `(let* (,@(cgl-r/m-set store location eos 'tmp))
-                                 ,(continue merge ip))))))
+                (emit (if (eqv? (ModR/M-reg modr/m) 0)
+                          (cg-pop eos 'tmp
+                                  `(let* (,@(cgl-r/m-set store location eos 'tmp))
+                                     ,(continue merge ip)))
+                          (cg-int-invalid-opcode return merge start-ip)))))
              ((#x90)                    ; nop
               (emit (continue merge ip)))
              ((#;#x90 #x91 #x92 #x93 #x94 #x95 #x96 #x97)
@@ -1797,13 +1829,16 @@
                                     ,(return merge 'ip^))))
                               (else
                                (return merge 'ip^)))))))
-             ((#xCD)                 ; int Ib
+             ((#xCC)                    ; int 3
+              (emit (cg-int-breakpoint return merge ip)))
+             ((#xCD)                    ; int Ib
               (with-instruction-u8* ((vec <- cs ip))
-                (emit
-                 `(let* (,@(cgl-merge-fl merge)
-                         (fl^ (fl)) ;FIXME: clean up. Force one point of fl evaluation.
-                         (fl (lambda () fl^)))
-                    ,(cg-int vec ip return)))))
+                (emit (cg-int-software-interrupt vec return merge ip))))
+             ((#xCE)                    ; into
+              (emit
+               `(if ,(eqv? '(fl-OF) 0)
+                    ,(return merge ip)
+                    ,(cg-int-overflow return merge ip))))
              ((#xCF)                    ; iret
               (emit (cg-pop* eos 'saved-ip 'saved-cs 'saved-flags
                              `(let ((cs ,(cgasl 'saved-cs 4))
@@ -1950,7 +1985,7 @@
                            `(let* (,@(cgl-arithmetic 'result:l 'result:u eos 'DIV
                                                      (cg-register-ref idx-AX eos) input))
                               (if div-trap?
-                                  (error 'generate-translation "FIXME:DE")
+                                  ,(cg-int-divide-by-zero-error return merge start-ip)
                                   (let* (,@(cgl-register-update idx-AX 16
                                                                 (cgior 'result:l
                                                                        (cgasl 'result:u 8))))
@@ -1963,7 +1998,7 @@
                                                   (cgasl (cg-register-ref idx-DX eos) eos)))
                                    ,@(cgl-arithmetic 'result:l 'result:u eos 'DIV 'dx:ax input))
                               (if div-trap?
-                                  (error 'generate-translation "FIXME:DE")
+                                  ,(cg-int-divide-by-zero-error return merge start-ip)
                                   (let* (,@(cgl-register-update idx-AX eos 'result:l)
                                          ,@(cgl-register-update idx-DX eos 'result:u))
                                     ,(continue #t ip))))))))
@@ -1996,8 +2031,8 @@
              ((#xFE #xFF)                    ; Group 4 and Group 5
               (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                 (let ((operator (vector-ref GROUP-4/5 (ModR/M-reg modr/m))))
-                  (case operator
-                    ((INC DEC)
+                  (cond
+                    ((memq operator '(INC DEC))
                      (let ((eos (if (eqv? op #xFE) 8 eos)))
                        (emit
                         `(let* (,@(cgl-arithmetic 'result #f eos 'INC/DEC
@@ -2005,9 +2040,9 @@
                                                   (if (eqv? operator 'INC) 1 -1))
                                 ,@(cgl-r/m-set store location eos 'result))
                            ,(continue #t ip)))))
+                    ((not (eqv? op #xFF))
+                     (emit (cg-int-invalid-opcode return merge start-ip)))
                     (else
-                     (unless (eqv? op #xFF)
-                       (error 'generate-translation "TODO: raise #UD in group 5" operator))
                      (case operator
                        ((CALL)          ; call Ev
                         (emit
@@ -2015,40 +2050,38 @@
                                   `(let ((ip ,(cg-r/m-ref store location eos)))
                                      ,(return merge (cg-trunc 'ip eas))))))
                        ((CALLF)         ; callf Mp
-                        (unless (eq? store 'mem)
-                          (error 'generate-translation "TODO: raise #UD in callf Mp"))
                         (let ((z (case eos ((16) 2) (else 4))))
                           (emit
-                           (cg-push* 16 '(fxarithmetic-shift-right cs 4) ip
-                                     `(let* ((addr ,location)
-                                             (off (RAM addr ,eos))
-                                             (seg (RAM ,(cg+ 'addr z) 16))
-                                             (cs ,(cgasl 'seg 4)))
-                                        ,(return merge 'off))))))
+                           (if (eq? store 'mem)
+                               (cg-push* 16 '(fxarithmetic-shift-right cs 4) ip
+                                         `(let* ((addr ,location)
+                                                 (off (RAM addr ,eos))
+                                                 (seg (RAM ,(cg+ 'addr z) 16))
+                                                 (cs ,(cgasl 'seg 4)))
+                                            ,(return merge 'off)))
+                               (cg-int-invalid-opcode return merge start-ip)))))
                        ((JMP)           ; jmp Ev
                         (emit
                          `(let* ((ip ,(cg-r/m-ref store location eos)))
                             ,(return merge (cg-trunc 'ip eas)))))
                        ((JMPF)          ; jmpf Mp
-                        (unless (eq? store 'mem)
-                          (error 'generate-translation "TODO: raise #UD in jmpf Mp"))
                         (let ((z (case eos ((16) 2) (else 4))))
-                          (emit
-                           `(let* ((addr ,location)
-                                   (off (RAM addr ,eos))
-                                   (seg (RAM ,(cg+ 'addr z) 16))
-                                   (cs ,(cgasl 'seg 4)))
-                              ,(return merge 'off)))))
+                          (emit (if (eq? store 'mem)
+                                    `(let* ((addr ,location)
+                                            (off (RAM addr ,eos))
+                                            (seg (RAM ,(cg+ 'addr z) 16))
+                                            (cs ,(cgasl 'seg 4)))
+                                       ,(return merge 'off))
+                                    (cg-int-invalid-opcode return merge start-ip)))))
                        ((PUSH)          ;push Ev
                         (emit (cg-push eos (cg-r/m-ref store location eos)
                                        (continue merge ip))))
                        (else
                         (error 'generate-translation "TODO in group 5" cs ip operator))))))))
              (else
-              ;; TODO: #UD
               (if (not first?)
                   (emit (return merge start-ip))
-                  (error 'generate-translation "Unimplemented instruction" cs ip op)))))))))
+                  (emit (cg-int-invalid-opcode return merge start-ip))))))))))
 
 ;;; Translation cache
 

@@ -137,7 +137,7 @@
   (define (pcbios-interrupt bios-data M vec)
     (define (not-implemented)
       ;; XXX: This should be logging instead.
-      (print "Unhandled BIOS INT #x" (number->string vec 16)
+      (print "pcbios: Unhandled BIOS INT #x" (number->string vec 16)
              " AX=#x" (number->string (machine-AX M) 16))
       (set-CF))
     (define (set-CF)
@@ -157,6 +157,15 @@
         (print "pcbios: BIOS INT #x" (number->string vec 16)
                " AX=#x" (number->string (machine-AX M) 16)))
       (case vec
+        ((#x06)
+         (let ((hex (lambda (x) (number->string x 16)))
+               (saved-ip (memory-u16-ref (real-pointer (machine-SS M) (machine-SP M))))
+               (saved-cs (memory-u16-ref (real-pointer (machine-SS M) (+ (machine-SP M) 2)))))
+           (print "pcbios: Invalid opcode (may be an unimplemented instruction) at "
+                  (hex saved-cs) ":" (hex saved-ip) ": "
+                  (hex (memory-u8-ref (real-pointer saved-cs saved-ip))) " "
+                  (hex (memory-u8-ref (real-pointer saved-cs (fx+ saved-ip 1))))))
+         'exit-dos)
         ((#x10)
          (case AH
            ((#x0E)
