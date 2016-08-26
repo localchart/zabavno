@@ -741,7 +741,17 @@
     (case eos
       ((16) (cgand expr #xffff))
       ((8) (cgand expr #xff))
-      (else (cgand expr #xffffffff))))
+      (else
+       (assert (eqv? eos 32))
+       (cgand expr #xffffffff))))
+
+  (define (cg-recover-sign expr eos)
+    ;; Takes an unsigned integer and recovers the sign, in case it's
+    ;; larger than the largest signed integer.
+    `(let ((x ,expr))
+       (if (> x ,(- (expt 2 (- eos 1)) 1))
+           ,(cg- 'x (expt 2 eos))
+           x)))
 
   (define GROUP-1 '#(ADD OR ADC SBB AND SUB XOR CMP))
 
@@ -766,7 +776,6 @@
                          (cgxor b result))
                   (fx- result-width 1)))
     (define (cg-AF cg% a b)
-      ;; TODO: this is wrong.
       `(if ,(cgbit-set? (cg% (cgand a #b1111)
                              (cgand b #b1111))
                         4)
@@ -840,6 +849,24 @@
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () 0))          ;undefined
          (fl-CF (lambda () 0))))        ;undefined
+
+      ((IMUL)
+       `((t0 ,(cg-recover-sign t0 eos))
+         (t1 ,t1)
+         (tmp (* t0 t1))
+         (,result ,(cg-trunc 'tmp eos))
+         (,result:u ,(or (eqv? result:u '_)
+                         (cg-trunc '(bitwise-arithmetic-shift-right tmp eos) eos)))
+         ;; CF and OF are set if the result did not fit in lower
+         ;; destination.
+         (fl-OF (lambda () (if (<= ,(- (expt 2 (- eos 1))) tmp ,(- (expt 2 (- eos 1)) 1))
+                               0 ,flag-OF)))
+         (fl-SF (lambda () ,(cg-SF result))) ;undefined
+         (fl-ZF (lambda () ,flag-ZF))        ;undefined
+         (fl-AF (lambda () 0))               ;undefined
+         (fl-PF (lambda () ,flag-PF))        ;undefined
+         (fl-CF (lambda () (if (<= ,(- (expt 2 (- eos 1))) tmp ,(- (expt 2 (- eos 1)) 1))
+                               0 ,flag-CF)))))
 
       ((INC/DEC)
        `((t0 ,t0)
@@ -1536,6 +1563,14 @@
              ((#x6A)                    ; push IbS
               (with-instruction-s8* ((imm <- cs ip))
                 (emit (cg-push eos imm (continue merge ip)))))
+             ((#x6B)                    ; imul Gv Ev IbS
+              (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                (with-instruction-s8* ((imm <- cs ip))
+                  (emit
+                   `(let* (,@(cgl-arithmetic 'result '_ eos 'IMUL
+                                             (cg-r/m-ref store location eos) imm)
+                           ,@(cgl-reg-set modr/m eos 'result))
+                      ,(continue #t ip))))))
              ((#x70 #x71 #x72 #x73 #x74 #x75 #x76 #x77 #x78 #x79 #x7A #x7B #x7C #x7D #x7E #x7F)
               ;; Jcc Jb
               (with-instruction-s8* ((disp <- cs ip))
@@ -1789,9 +1824,19 @@
                                                  imm)
                                ,@(cgl-r/m-set store location eos 'result))
                           ,(continue #t ip))))))))
-             ((#xC3)                    ; ret
-              (emit (cg-pop eos 'saved-ip
-                            (return merge 'saved-ip))))
+             ((#xC2 #xC3)               ; ret Iw / ret
+              (emit
+               (cg-pop eos 'saved-ip
+                       `(let ((ip^ ,(if (eqv? eos 32) 'saved-ip (cgand 'saved-ip #xffff))))
+                          ,(case op
+                             ((#xC2)
+                              (with-instruction-u16* ((imm <- cs ip))
+                                ;; pop imm bytes off the stack
+                                `(let* (,@(cgl-register-update idx-SP eas (cg+ (cg-trunc 'SP eas)
+                                                                               imm)))
+                                   ,(return merge 'ip^))))
+                             (else
+                              (return merge 'ip^)))))))
              ((#xC4 #xC5)               ; les Gz Mp, lds Gz Mp
               (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                 (assert (eq? store 'mem)) ;TODO: #UD
@@ -1919,6 +1964,12 @@
              ((#xEB)                    ; jmp Jb
               (with-instruction-s8* ((disp <- cs ip))
                 (emit (return merge (fwand #xffff (fw+ ip disp))))))
+             ((#xEE #xEF)               ; out *DX *AL, out *DX *eAX
+              (let ((eos (if (eqv? op #xEE) 8 eos)))
+                (emit `(let ((port ,(cg-register-ref idx-DX 16))
+                             (value ,(cg-register-ref idx-AX eos)))
+                         (I/O port ,eos value)
+                         ,(continue merge ip)))))
              ((#xF1)                    ; icebp / int1
               ;; In-Circuit Emulator BreakPoint. Exit. Normally
               ;; this would be equivalent to INT 1, except it doesn't
@@ -2073,11 +2124,11 @@
                                             (cs ,(cgasl 'seg 4)))
                                        ,(return merge 'off))
                                     (cg-int-invalid-opcode return merge start-ip)))))
-                       ((PUSH)          ;push Ev
+                       ((PUSH)          ; push Ev
                         (emit (cg-push eos (cg-r/m-ref store location eos)
                                        (continue merge ip))))
-                       (else
-                        (error 'generate-translation "TODO in group 5" cs ip operator))))))))
+                       (else            ; #UD
+                        (emit (cg-int-invalid-opcode return merge start-ip)))))))))
              (else
               (if (not first?)
                   (emit (return merge start-ip))
