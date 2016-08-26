@@ -415,7 +415,10 @@
                 (else
                  ;; TODO: handle errors, textual input ports, and CON stops at CR
                  (let* ((port (vector-ref file-handles file-handle))
-                        (bv (get-bytevector-n port count)))
+                        (bv (if (< file-handle 3)
+                                (let ((s (get-string-n port count))) ;XXX: can read too much
+                                  (if (eof-object? s) s (string->utf8 s)))
+                                (get-bytevector-n port count))))
                    (when (machine-debug M)
                      (print "pcbios: read fh " file-handle ", "
                             (or (eof-object? bv) (bytevector-length bv))
@@ -425,7 +428,8 @@
                                                           (fxnot #xFFFF)))
                           (clear-CF))
                          (else
-                          (copy-to-memory buffer bv) ;XXX: does not wrap the segment
+                          ;; XXX: does not wrap in the segment
+                          (copy-to-memory buffer bv 0 (fxmin count (bytevector-length bv)))
                           (machine-AX-set! M (bitwise-ior (bitwise-and (machine-AX M)
                                                                        (fxnot #xFFFF))
                                                           (bytevector-length bv)))

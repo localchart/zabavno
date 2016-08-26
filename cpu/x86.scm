@@ -83,7 +83,7 @@
           (rnrs eval))
 
   ;; Fill memory with this u8 value.
-  (define DEFAULT-MEMORY-FILL #xF1)
+  (define DEFAULT-MEMORY-FILL #xFF)
 
   (define pretty-print
     (lambda (x) (write x) (newline)))
