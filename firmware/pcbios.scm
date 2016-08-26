@@ -494,5 +494,8 @@
             (exit (bitwise-bit-field (machine-AX M) 0 8)))
            (else
             (not-implemented))))
+        ((#x29)                         ;fast console output
+         (put-char (current-output-port)
+                   (integer->char (bitwise-bit-field (machine-AX M) 0 8))))
         (else
          (not-implemented))))))
