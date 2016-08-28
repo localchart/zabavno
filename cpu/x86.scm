@@ -1911,6 +1911,8 @@
                        (result (RAM addr 8))
                        ,@(cgl-register-update idx-AX 8 'result))
                   ,(continue merge ip))))
+             ((#xD8 #xD9 #xDA #xDB #xDC #xDD #xDE #xDF) ;x87 instructions
+              (emit (cg-int-device-not-available return merge start-ip)))
              ((#xE0 #xE1 #xE2)          ; loopnz Jb, loopz Jb, loop Jb
               ;; TODO: If ip+disp = start-ip, then a loop can be emitted.
               (with-instruction-s8* ((disp <- cs ip))

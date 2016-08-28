@@ -81,6 +81,7 @@
         (memory-u16-set! addr off)
         (memory-u16-set! (+ addr 2) seg)
         (memory-u8-set! (real-pointer seg off) #xF1))) ;ICEBP
+    ;; BIOS data area (BDA)
     (let ((equipment (fxior (fxarithmetic-shift-left 1 0) ;floppy disk
                             (fxarithmetic-shift-left 0 1) ;no 387
                             (fxarithmetic-shift-left #b10 4)))) ;80x25 color
@@ -166,6 +167,9 @@
                   (hex (memory-u8-ref (real-pointer saved-cs saved-ip))) " "
                   (hex (memory-u8-ref (real-pointer saved-cs (fx+ saved-ip 1))))))
          'exit-dos)
+        ((#x07)
+         (print "pcbios: No x87 emulation has been implemented/installed, exiting")
+         'exit-dos)
         ((#x10)
          (case AH
            ((#x0E)
@@ -199,7 +203,7 @@
                   (buffer-seg (machine-ES M))
                   (buffer-off (machine-BX M)))
               (when (machine-debug M)
-                (print "pcbios: read " sectors " sectors from " (list cylinder sector head)
+                (print "pcbios: read " sectors " sectors from " (list cylinder head sector)
                        " on drive " drive " to " buffer-seg ":" buffer-off))
               (cond
                 ((zero? sectors)
