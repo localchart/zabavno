@@ -846,7 +846,7 @@
          (fl-OF (lambda () 0))          ;undefined
          (fl-SF (lambda () 0))          ;undefined
          (fl-ZF (lambda () 0))          ;undefined
-         (fl-AF (lambda () 0))          ;undefined
+         (fl-AF (lambda () ,flag-AF))   ;undefined
          (fl-PF (lambda () 0))          ;undefined
          (fl-CF (lambda () 0))))        ;undefined
 
@@ -1024,7 +1024,7 @@
        `((t0 ,t0)
          (t1 ,(cgand t1 #b00011111))
          (tmp ,(cgasr 't0 't1))
-         (,result ,(cg-trunc 'tmp eos))
+         (,result tmp)
          (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
                                  ((and #;(eqv? t1 1)
                                        ,(cgbit-set? 't0 (fx- eos 1)))
@@ -1839,14 +1839,15 @@
                               (return merge 'ip^)))))))
              ((#xC4 #xC5)               ; les Gz Mp, lds Gz Mp
               (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
-                (assert (eq? store 'mem)) ;TODO: #UD
-                (let ((off-size (if (eqv? eos 16) 2 4)))
-                  (emit
-                   `(let ((seg (RAM ,(cg+ location off-size) 16))
-                          (off (RAM ,location ,eos)))
-                      (let* (,@(cgl-reg-set modr/m eos 'off)
-                             (,(if (eqv? op #xC4) 'es 'ds) ,(cgasl 'seg 4)))
-                        ,(continue merge ip)))))))
+                (emit
+                 (if (eq? store 'mem)
+                     `(let* ((addr ,location)
+                             (off (RAM addr ,eos))
+                             (seg (RAM ,(cg+ 'addr (/ eos 8)) 16)))
+                        (let* (,@(cgl-reg-set modr/m eos 'off)
+                               (,(if (eqv? op #xC4) 'es 'ds) ,(cgasl 'seg 4)))
+                          ,(continue merge ip)))
+                     (emit (cg-int-invalid-opcode return merge start-ip))))))
              ((#xC6 #xC7)               ; Group 11
               (let ((eos (if (eqv? op #xC6) 8 eos)))
                 (with-r/m-operand ((ip store location modr/m)
@@ -1858,8 +1859,7 @@
                         `(let* (,@(cgl-r/m-set store location eos imm))
                            ,(continue merge ip))))
                       (else
-                       (error 'run "TODO: raise #UD in Group 11" (hex op)
-                              (hex modr/m))))))))
+                       (emit (cg-int-invalid-opcode return merge start-ip))))))))
              ((#xCA #xCB)               ; retf Iw / retf
               (emit
                (cg-pop* eos 'off 'seg
@@ -2034,7 +2034,7 @@
                           ;; AH <- AX remainder input
                           (emit
                            `(let* (,@(cgl-arithmetic 'result:l 'result:u eos 'DIV
-                                                     (cg-register-ref idx-AX eos) input))
+                                                     (cg-register-ref idx-AX 16) input))
                               (if div-trap?
                                   ,(cg-int-divide-by-zero-error return merge start-ip)
                                   (let* (,@(cgl-register-update idx-AX 16
@@ -2101,29 +2101,27 @@
                                   `(let ((ip ,(cg-r/m-ref store location eos)))
                                      ,(return merge (cg-trunc 'ip eas))))))
                        ((CALLF)         ; callf Mp
-                        (let ((z (case eos ((16) 2) (else 4))))
-                          (emit
-                           (if (eq? store 'mem)
-                               (cg-push* 16 '(fxarithmetic-shift-right cs 4) ip
-                                         `(let* ((addr ,location)
-                                                 (off (RAM addr ,eos))
-                                                 (seg (RAM ,(cg+ 'addr z) 16))
-                                                 (cs ,(cgasl 'seg 4)))
-                                            ,(return merge 'off)))
-                               (cg-int-invalid-opcode return merge start-ip)))))
+                        (emit
+                         (if (eq? store 'mem)
+                             (cg-push* 16 '(fxarithmetic-shift-right cs 4) ip
+                                       `(let* ((addr ,location)
+                                               (off (RAM addr ,eos))
+                                               (seg (RAM ,(cg+ 'addr (/ eos 8)) 16))
+                                               (cs ,(cgasl 'seg 4)))
+                                          ,(return merge 'off)))
+                             (cg-int-invalid-opcode return merge start-ip))))
                        ((JMP)           ; jmp Ev
                         (emit
                          `(let* ((ip ,(cg-r/m-ref store location eos)))
                             ,(return merge (cg-trunc 'ip eas)))))
                        ((JMPF)          ; jmpf Mp
-                        (let ((z (case eos ((16) 2) (else 4))))
-                          (emit (if (eq? store 'mem)
-                                    `(let* ((addr ,location)
-                                            (off (RAM addr ,eos))
-                                            (seg (RAM ,(cg+ 'addr z) 16))
-                                            (cs ,(cgasl 'seg 4)))
-                                       ,(return merge 'off))
-                                    (cg-int-invalid-opcode return merge start-ip)))))
+                        (emit (if (eq? store 'mem)
+                                  `(let* ((addr ,location)
+                                          (off (RAM addr ,eos))
+                                          (seg (RAM ,(cg+ 'addr (/ eos 8)) 16))
+                                          (cs ,(cgasl 'seg 4)))
+                                     ,(return merge 'off))
+                                  (cg-int-invalid-opcode return merge start-ip))))
                        ((PUSH)          ; push Ev
                         (emit (cg-push eos (cg-r/m-ref store location eos)
                                        (continue merge ip))))

@@ -389,9 +389,14 @@
  '((mov ax -6) (xor dx dx) (imul dx ax -7))
  '((mov ax -32768) (xor dx dx) (imul dx ax -128))
 
- ;; ;; F6 F7 DIV
- ;; '((mov ax 42) (cwd) (mov cx 6) (div cx))
- ;; '((mov ax 42) (cwd) (mov cx 6) (div cl))
+ ;; F6 F7 DIV
+ '((mov ax 42) (cwd) (mov cx 6) (div cx))
+ '((mov ax 42) (cwd) (mov cx 6) (div cl))
+ '((mov ax #x0200)
+   (mov bx 16)
+   (push bx)
+   (mov bp sp)
+   (%u8 #xF6 #x76 #x00) #;(div (mem8+ bp)))
 
  ;; XLATB.
  '((mov di #x4042)
