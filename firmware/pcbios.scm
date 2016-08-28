@@ -264,6 +264,16 @@
                      (machine-ES-set! M es)
                      (machine-DI-set! M di)
                      (clear-CF)))))))
+           ((#x15)                      ;get disk type
+            (let ((drive (fxbit-field (machine-DX M) 0 7))
+                  (disk-drive? (fxbit-set? (machine-DX M) 7)))
+              (let ((type (if (or disk-drive? (> drive 0))
+                              #x00      ; no such drive
+                              #x01)))   ; floppy without change-line support
+                (machine-AX-set! M (fxior type
+                                          (bitwise-and (machine-AX M)
+                                                       (fxnot #xFFFF))))
+                (clear-CF))))
            (else
             (not-implemented))))
         ((#x14)
@@ -314,6 +324,51 @@
          ;; Bootstrap loader. Used to reboot the machine.
          (clear-CF)
          'reboot)
+        ((#x1A)                         ;TIME
+         ;; TODO: Really get the time.
+         (let ((hour 19) (minutes 01) (seconds 23) (dst-flag #x01)
+               (century 20) (year 16) (month 8) (day 27))
+           (define (bcd n)
+             (let lp ((ret 0) (n n) (s 0))
+               (if (eqv? n 0)
+                   ret
+                   (lp (fx+ ret (fxarithmetic-shift-left (fxand n #xf) s))
+                       (fxarithmetic-shift-right n 4)
+                       (fx+ s 4)))))
+           (case AH
+             ((#x00)                    ;get system time
+              (let* ((ticks-per-day #x1800B0) ; ~18.2 ticks/s
+                     (clock-ticks (round (* (+ (* hour 60 60) (* minutes 60) seconds)
+                                            (/ (* 24 60 60) ticks-per-day))))
+                     (midnight-counter #x00))
+                (machine-CX-set! M (bitwise-ior (bitwise-bit-field clock-ticks 16 32)
+                                                (bitwise-and (machine-CX M)
+                                                             (fxnot #xFFFF))))
+                (machine-DX-set! M (bitwise-ior (bitwise-bit-field clock-ticks 0 16)
+                                                (bitwise-and (machine-DX M)
+                                                             (fxnot #xFFFF))))
+                (machine-AX-set! M (bitwise-ior midnight-counter
+                                                (bitwise-and (machine-AX M)
+                                                             (fxnot #xFF))))
+                (clear-CF)))
+             ((#x02)                    ;get rtc time
+              (machine-CX-set! M (bitwise-ior (bcd (+ (* hour 100) minutes))
+                                              (bitwise-and (machine-CX M)
+                                                           (fxnot #xFFFF))))
+              (machine-DX-set! M (bitwise-ior (bcd (+ (* seconds 100) dst-flag))
+                                              (bitwise-and (machine-DX M)
+                                                           (fxnot #xFFFF))))
+              (clear-CF))
+             ((#x04)                    ;get rtc date
+              (machine-CX-set! M (bitwise-ior (bcd (+ (* century 100) year))
+                                              (bitwise-and (machine-CX M)
+                                                           (fxnot #xFFFF))))
+              (machine-DX-set! M (bitwise-ior (bcd (+ (* month 100) day))
+                                              (bitwise-and (machine-DX M)
+                                                           (fxnot #xFFFF))))
+              (clear-CF))
+             (else
+              (not-implemented)))))
         ((#x20)                         ;DOS
          ;; Terminate program. Used to exit the program.
          'exit-dos)
