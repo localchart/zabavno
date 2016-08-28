@@ -254,6 +254,10 @@
 ;; for the emulator to save which flags are currently undefined.
 
 (run-tests
+ ;; Byte registers
+ '((mov al 0) (mov ah 1) (mov bl 2) (mov bh 3)
+   (mov cl 4) (mov ch 5) (mov dl 6) (mov dh 7))
+
  ;; CMPS.
  '((mov di #x100)
    (mov si di)
@@ -262,6 +266,10 @@
  '((mov di #x100)
    (mov si di)
    (mov cx 1)
+   (%u8 #xf3 #xa6))
+ '((mov di #x100)
+   (mov si di)
+   (mov cx 0)
    (%u8 #xf3 #xa6))
 
  ;; SHR.
