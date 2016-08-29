@@ -54,6 +54,9 @@
     (for-each (lambda (x) (display x (current-error-port))) x)
     (newline (current-error-port)))
 
+  (define (hex x)
+    (number->string x 16))
+
   ;; Converts from CHS format to LBA, for 1.44 MB floppies.
   (define (floppy-2880-chs->lba cylinder head sector)
     (let ((heads/cylinder 2)
@@ -139,18 +142,13 @@
     (define (not-implemented)
       ;; XXX: This should be logging instead.
       (print "pcbios: Unhandled BIOS INT #x" (number->string vec 16)
-             " AX=#x" (number->string (machine-AX M) 16))
-      (set-CF))
+             " AX=#x" (number->string (machine-AX M) 16)))
     (define (set-CF)
-      (let ((addr (+ (* (machine-SS M) 16)
-                     (machine-SP M)
-                     4)))
+      (let ((addr (real-pointer (machine-SS M) (+ (machine-SP M) 4))))
         (memory-u16-set! addr (fxior flag-CF (memory-u16-ref addr)))))
     (define (clear-CF)
       (flush-output-port (current-output-port))
-      (let ((addr (+ (* (machine-SS M) 16)
-                     (machine-SP M)
-                     4)))
+      (let ((addr (real-pointer (machine-SS M) (+ (machine-SP M) 4))))
         (memory-u16-set! addr (fxand (fxnot flag-CF)
                                      (memory-u16-ref addr)))))
     (let ((AH (bitwise-bit-field (machine-AX M) 8 16)))
@@ -159,8 +157,7 @@
                " AX=#x" (number->string (machine-AX M) 16)))
       (case vec
         ((#x06)
-         (let ((hex (lambda (x) (number->string x 16)))
-               (saved-ip (memory-u16-ref (real-pointer (machine-SS M) (machine-SP M))))
+         (let ((saved-ip (memory-u16-ref (real-pointer (machine-SS M) (machine-SP M))))
                (saved-cs (memory-u16-ref (real-pointer (machine-SS M) (+ (machine-SP M) 2)))))
            (print "pcbios: Invalid opcode (may be an unimplemented instruction) at "
                   (hex saved-cs) ":" (hex saved-ip) ": "
@@ -204,7 +201,7 @@
                   (buffer-off (machine-BX M)))
               (when (machine-debug M)
                 (print "pcbios: read " sectors " sectors from " (list cylinder head sector)
-                       " on drive " drive " to " buffer-seg ":" buffer-off))
+                       " on drive " drive " to " (hex buffer-seg) ":" (hex buffer-off)))
               (cond
                 ((zero? sectors)
                  (set-CF))
@@ -291,6 +288,11 @@
             (not-implemented))))
         ((#x15)
          (case AH
+           ((#x88)                      ; get extended memory size
+            (machine-AX-set! M (bitwise-ior (bitwise-and (machine-AX M) (bitwise-not #xffff))
+                                            (bitwise-and (div (- (machine-memory-size M) #x100000) 1024)
+                                                         #xffff)))
+            (clear-CF))
            ((#xC0)                      ;get configuration
             (machine-ES-set! M #xF000)
             (machine-BX-set! M #xE6F5)
@@ -300,14 +302,25 @@
             (not-implemented))))
         ((#x16)
          (case AH
-           ((#x00)                      ; get keystroke
+           ((#x00)                 ; get keystroke / get enhanced keystroke
             (let* ((c (get-char (current-input-port)))
                    (c (if (eof-object? c) (integer->char 26) c))) ;Ctrl-Z
               (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xffff))
-                                        (fx* #x0101 (fxand (char->integer c) #xff))))
-              (clear-CF)))
+                                        (fx* #x0101 (fxand (char->integer c) #xff))))))
+           ((#;#x01 #x11
+             ) ; check for keystroke / check for enhanced keystroke
+            ;; Set ZF to indicate that no keystroke is available.
+            ;; TODO: Can't be done with current-input-port in pure R6RS.
+            (let ((addr (real-pointer (machine-SS M) (+ (machine-SP M) 4))))
+              #;(memory-u16-set! addr (fxand (fxnot flag-ZF) (memory-u16-ref addr)))
+              (memory-u16-set! addr (fxior flag-ZF (memory-u16-ref addr)))))
+           ((#x02)                      ; get shift flags
+            (let ((flags 0))
+              (machine-AX-set! M (bitwise-ior flags
+                                              (bitwise-and (machine-AX M) (bitwise-not #xff))))))
            (else
-            (not-implemented))))
+            (print "pcbios: Unhandled BIOS keyboard INT #x" (number->string vec 16)
+                   " AH=#x" (number->string AH 16)))))
         ((#x17)
          (case AH
            ((#x01)
@@ -349,8 +362,7 @@
                                                              (fxnot #xFFFF))))
                 (machine-AX-set! M (bitwise-ior midnight-counter
                                                 (bitwise-and (machine-AX M)
-                                                             (fxnot #xFF))))
-                (clear-CF)))
+                                                             (fxnot #xFF))))))
              ((#x02)                    ;get rtc time
               (machine-CX-set! M (bitwise-ior (bcd (+ (* hour 100) minutes))
                                               (bitwise-and (machine-CX M)
@@ -374,6 +386,9 @@
          'exit-dos)
         ((#x21)                         ;DOS
          (case AH
+           ((#x02)                      ; write character to standard output
+            (put-char (current-output-port)
+                      (integer->char (bitwise-bit-field (machine-DX M) 0 8))))
            ((#x09)                      ; Print a $-terminated string.
             (let lp ((i (machine-DX M)))
               (let* ((addr (fx+ (fx* (machine-DS M) 16) i))
@@ -552,6 +567,7 @@
            ((#x4C)                      ;terminate with return code
             (exit (bitwise-bit-field (machine-AX M) 0 8)))
            (else
+            (set-CF)
             (not-implemented))))
         ((#x29)                         ;fast console output
          (put-char (current-output-port)
