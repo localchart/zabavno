@@ -272,6 +272,13 @@
    (mov cx 0)
    (%u8 #xf3 #xa6))
 
+ ;; SAR.
+ '((mov al #b10000000)
+   (sar al 1))
+ '((mov al #b01111111)
+   (mov cl 2)
+   (sar al cl))
+
  ;; SHR.
  '((mov ax #b0)
    (shr ax 1))

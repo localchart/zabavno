@@ -1007,6 +1007,22 @@
                                    ,flag-CF
                                    0))))))
 
+      ((SAR)
+       `((t0 ,(cg-recover-sign t0 eos))
+         (t1 ,(cgand t1 #b00011111))
+         (tmp ,(cgasr 't0 't1))
+         (,result tmp)
+         (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
+                                 (else 0)))) ;undefined for t1>1
+         (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result))))
+         (fl-ZF (lambda () (if (eqv? t1 0) (fl-ZF) ,(cg-ZF result))))
+         (fl-AF (lambda () (if (eqv? t1 0) (fl-AF) ,flag-AF))) ;undefined
+         (fl-PF (lambda () (if (eqv? t1 0) (fl-PF) ,(cg-PF result))))
+         (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
+                               (if ,(cgbit-set? 't0 (cg- 't1 1))
+                                   ,flag-CF
+                                   0))))))
+
       ((SBB)
        `((t0 ,t0)
          (t1 ,t1)
