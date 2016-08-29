@@ -1893,6 +1893,38 @@
                            ,(continue merge ip))))
                       (else
                        (emit (cg-int-invalid-opcode return merge start-ip))))))))
+             ((#xC8)                    ; enter Iw Ib
+              ;; The mother pearl of CISC instructions.
+              (with-instruction-immediate* ((storage <- cs ip 16)
+                                            (level <- cs ip 8))
+                (emit
+                 (cg-push stack-size 'BP
+                          `(let ((frame-pointer ,(cg-register-ref idx-SP eos))
+                                 (old-BP ,(cg-register-ref idx-BP eos)))
+                             ,(let lp ((level (fxand level #b11111)))
+                                (cond
+                                  ((> level 0)
+                                   `(let lp-push ((i 1))
+                                      (cond
+                                        ((fx<? i ,level)
+                                         ;; Copy previous frame pointers.
+                                         (let* ((tmp (RAM ,(cg+ 'ss `(- BP (* i ,(/ stack-size 8)))) eos)))
+                                           ,(cg-push eos 'tmp '(lp-push (fx- level 1)))))
+                                       (else
+                                        ,(cg-push eos 'frame-pointer (lp 0))))))
+                                  (else
+                                   `(let* (,@(cgl-register-update idx-SP eos
+                                                                  (cg- (cg-register-ref idx-SP eos)
+                                                                       storage))
+                                           ;; TODO: Check that SP can be written to.
+                                           ,@(cgl-register-update idx-BP eos 'frame-pointer))
+                                      ,(continue merge ip))))))))))
+             ((#xC9)                    ; leave
+              (emit
+               `(let* (,@(cgl-register-update idx-SP stack-size (cg-register-ref idx-BP stack-size)))
+                  ,(cg-pop stack-size 'tmp
+                           `(let* (,@(cgl-register-update idx-BP stack-size 'tmp))
+                              ,(continue merge ip))))))
              ((#xCA #xCB)               ; retf Iw / retf
               (emit
                (cg-pop* eos 'off 'seg
