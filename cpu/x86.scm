@@ -1227,6 +1227,20 @@
                                ,@(cgl-arithmetic 'cmp-result #f eos 'CMP 'src0 'src1))
                           ,k-continue))))))
 
+  (define (cg-outs dseg repeat eos eas k-restart k-continue)
+    ;; Reads from dseg:rSI and writes to the port in DX, increments or
+    ;; decrements rSI. With repeat=z it repeats until rCX=0. For
+    ;; rDI/rCX eas is used. es can not be overridden.
+    `(let ((dst-port ,(cg-register-ref idx-DX 16)))
+       ,(%cg-rep repeat eos eas k-restart k-continue
+                 `(let* ((src-addr ,(cg+ dseg (cg-register-ref idx-SI eas)))
+                         ,@(cgl-register-update idx-SI eas (cg+ 'SI 'n)))
+                    (I/O dst-port ,eos (RAM src-addr ,eos))
+                    (if (not (eqv? count 0))
+                        (lp-rep DI SI count iterations)
+                        (let* (,@(if repeat (cgl-register-update idx-CX eas 'count) '()))
+                          ,k-continue))))))
+
   (define (cg-arithmetic-group op operator ip cs dseg sseg eos eas continue)
     (let ((subop (fwand op #x7)))
       (case (fxasr subop 1)
@@ -1507,6 +1521,18 @@
                                              (cg-r/m-ref store location eos) imm)
                            ,@(cgl-reg-set modr/m eos 'result))
                       ,(continue #t ip))))))
+             ((#x6E #x6F)               ; outs *DX Xb, outs *DX Xz
+              (let ((eos (if (eqv? op #x6E) 8 eos)))
+                (cond ((eqv? repeat 'z)
+                       (cond ((not first?)
+                              (emit (return merge start-ip)))
+                             (else
+                              (emit
+                               `(let* (,@(cgl-merge-fl merge)) ;update fl early
+                                  ,(cg-outs dseg repeat eos eas
+                                            (return #f start-ip) (return #f ip)))))))
+                      (else
+                       (emit (cg-outs dseg repeat eos eas '(error) (continue merge ip)))))))
              ((#x70 #x71 #x72 #x73 #x74 #x75 #x76 #x77 #x78 #x79 #x7A #x7B #x7C #x7D #x7E #x7F)
               ;; Jcc Jb
               (with-instruction-s8* ((disp <- cs ip))
