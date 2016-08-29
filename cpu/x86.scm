@@ -1541,6 +1541,14 @@
              ((#x68)                    ; push Iz
               (with-instruction-immediate* ((imm <- cs ip eos))
                 (emit (cg-push eos imm (continue merge ip)))))
+             ((#x69)                    ; imul Gv Ev Iz
+              (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                (with-instruction-immediate* ((imm <- cs ip eos))
+                  (emit
+                   `(let* (,@(cgl-arithmetic 'result '_ eos 'IMUL
+                                             (cg-r/m-ref store location eos) imm)
+                           ,@(cgl-reg-set modr/m eos 'result))
+                      ,(continue #t ip))))))
              ((#x6A)                    ; push IbS
               (with-instruction-s8* ((imm <- cs ip))
                 (emit (cg-push eos imm (continue merge ip)))))
