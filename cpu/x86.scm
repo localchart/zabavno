@@ -305,6 +305,11 @@
 
   (define reg-names '#(AX CX DX BX SP BP SI DI))
 
+  (define idx-AH 4)
+  (define idx-CH 5)
+  (define idx-DH 6)
+  (define idx-BH 7)
+
 ;;; Flags
 
   (define (print-flags fl)
@@ -327,8 +332,10 @@
   (define flag-DF (expt 2 10))          ;direction
   (define flag-IF (expt 2 9))           ;interrupt enable
 
-  (define flag-TF (expt 2 8))
-  (define flag-AC (expt 2 18))
+  (define flag-TF (expt 2 8))           ;trap flag
+  (define flag-RF (expt 2 16))          ;resume flag
+  (define flag-VM (expt 2 17))          ;virtual-8086 mode
+  (define flag-AC (expt 2 18))          ;alignment check
 
   ;; "Identification of Earlier IA-32 Processors" in IA32 SDM Vol 1.
   ;; Should match an 80386.
@@ -337,9 +344,23 @@
                                        (expt 2 15)
                                        ;; IOPL 0 forever
                                        (expt 2 13)
-                                       (expt 2 12)))
+                                       (expt 2 12)
+                                       ;; Always zero
+                                       (expt 2 3)
+                                       (expt 2 5)
+                                       (expt 2 15)
+                                       (expt 2 22)
+                                       (expt 2 23)
+                                       (expt 2 24)
+                                       (expt 2 25)
+                                       (expt 2 26)
+                                       (expt 2 27)
+                                       (expt 2 28)
+                                       (expt 2 29)
+                                       (expt 2 30)
+                                       (expt 2 31)))
 
-  (define flags-always-set 2)
+  (define flags-always-set #b10)
 
 ;;; Memory
 
@@ -1676,13 +1697,35 @@
                                     ;; flags. Discard the fl-*
                                     ;; procedures.
                                     ,(cgior flags-always-set
-                                            (cgand (cgior 'tmp
-                                                          (cgand '(fl) (bitwise-not
-                                                                        (- (expt 2 eos) 1))))
-                                                   (bitwise-not flags-never-set))))))
+                                            (cgior
+                                             ;; Do not change RF/VM
+                                             (cgand '(fl) (bitwise-ior flag-RF flag-VM))
+                                             (cgand (cgior 'tmp
+                                                           ;; popfw leaves upper bits unchanged
+                                                           (cgand '(fl) (bitwise-not
+                                                                         (- (expt 2 eos) 1))))
+                                                    ;; Ignore these flags
+                                                    (bitwise-not
+                                                     (bitwise-ior flags-never-set flag-RF flag-VM))))))))
                           ;; Need to return so that the fl-*
                           ;; procedures will be reloaded.
                           ,(return #f ip)))))
+             ((#x9E)                    ; sahf
+              (emit
+               `(let* ((AH ,(cg-register-ref idx-AH 8))
+                       (fl-SF (lambda () ,(cgand flag-SF 'AH)))
+                       (fl-ZF (lambda () ,(cgand flag-ZF 'AH)))
+                       (fl-AF (lambda () ,(cgand flag-AF 'AH)))
+                       (fl-PF (lambda () ,(cgand flag-PF 'AH)))
+                       (fl-CF (lambda () ,(cgand flag-CF 'AH))))
+                  ,(continue #t ip))))
+             ((#x9F)                    ; lahf
+              (emit
+               `(let* (,@(cgl-merge-fl/eval merge)
+                       (tmp ,(cgior (cgand '(fl) (fxior flag-SF flag-ZF flag-AF flag-PF flag-CF))
+                                    flags-always-set))
+                       ,@(cgl-register-update idx-AH 8 'tmp))
+                  ,(continue #f ip))))
              ((#xA0 #xA1)                    ; mov *AL Ob, mov *rAX Ov
               (let ((eos (if (eqv? op #xA0) 8 eos)))
                 (with-instruction-immediate* ((addr <- cs ip eas))
