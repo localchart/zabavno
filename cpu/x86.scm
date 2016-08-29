@@ -1867,23 +1867,24 @@
              ((#xD8 #xD9 #xDA #xDB #xDC #xDD #xDE #xDF) ;x87 instructions
               (emit (cg-int-device-not-available return merge start-ip)))
              ((#xE0 #xE1 #xE2)          ; loopnz Jb, loopz Jb, loop Jb
-              ;; TODO: If ip+disp = start-ip, then a loop can be emitted.
               (with-instruction-s8* ((disp <- cs ip))
                 ;; eas determines if CX or ECX is used.
-                (emit
-                 `(let* ((count ,(cg-trunc (cg- (cg-register-ref idx-CX eas) 1) eas))
-                         ,@(cgl-register-update idx-CX eas 'count))
-                    (let* (,@(cgl-merge-fl merge) ;update fl early
-                           (fl^ (fl))   ;FIXME: clean up. Force one point of fl evaluation.
-                           (fl (lambda () fl^)))
-                      (cond ((and (not (eqv? count 0))
-                                  ,(case op
-                                     ((#xE0) '(eqv? (fl-ZF) 0)) ;loopnz
-                                     ((#xE1) '(not (eqv? (fl-ZF) 0))) ;loopz
-                                     (else #t))) ;loop
-                             ,(return #f (cgand #xffff (cg+ ip disp))))
-                            (else
-                             ,(return #f ip))))))))
+                (cond ((eqv? (fw+ ip disp) start-ip)
+                       (emit            ;pointless timing delay
+                        `(let* (,@(cgl-register-update idx-CX eas 0))
+                           ,(continue merge ip))))
+                      (else
+                       (emit
+                        `(let* ((count ,(cg-trunc (cg- (cg-register-ref idx-CX eas) 1) eas))
+                                ,@(cgl-register-update idx-CX eas 'count))
+                           (let ((ip^ (if (and (not (eqv? count 0))
+                                               ,(case op
+                                                  ((#xE0) '(eqv? (fl-ZF) 0)) ;loopnz
+                                                  ((#xE1) '(not (eqv? (fl-ZF) 0))) ;loopz
+                                                  (else #t)))
+                                          ,(cgand #xffff (cg+ ip disp))
+                                          ,ip)))
+                             ,(return merge 'ip^))))))))
              ((#xE3)                    ; jcxz Jb, jecxz Jb
               (with-instruction-s8* ((disp <- cs ip))
                 (emit
