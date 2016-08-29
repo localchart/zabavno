@@ -1122,6 +1122,15 @@
                        (fxior (fl-AF) (fl-CF))))))
         '()))
 
+  (define (cgl-merge-fl/eval merge)
+    ;; Merge updates of the arithmetic flags into the flags register,
+    ;; and force evaluation of the flags register. Useful when fl is
+    ;; referenced multiple times: avoids allocation of a procedure and
+    ;; only evaluates the flags once.
+    `(,@(cgl-merge-fl merge)
+      (fl^ (fl))
+      (fl (lambda () fl^))))
+
   (define (%cg-rep repeat eos eas k-restart k-continue body)
     ;; TODO: What happens to REPNE on instructions other than CMPS/SCAS?
     `(let ((n (if (fxzero? (fxand (fl) ,flag-DF)) ,(/ eos 8) ,(- (/ eos 8)))))
@@ -1284,19 +1293,17 @@
   (define (%cg-int vec error-code return merge ip)
     (define idt 0)                   ;real mode interrupt vector table
     (let ((code
-           (cg-push* 16 (cg-trunc '(fl) 16) '(fxarithmetic-shift-right cs 4) ip
-                     `(let* (,@(cgl-merge-fl merge)
-                             (fl^ (fl)) ;FIXME: clean up. Force one point of fl evaluation.
-                             (fl (lambda () fl^))
-                             (addr ,(cg+ idt (cgasl vec 2)))
-                             (off (RAM addr 16))
-                             (seg (RAM ,(cg+ 'addr 2) 16))
-                             (cs ,(cgasl 'seg 4))
-                             (fl (lambda ()
-                                   ,(cgand '(fl) (fxnot (fxior flag-IF
-                                                               flag-TF
-                                                               flag-AC))))))
-                        ,(return #f 'off)))))
+           `(let* (,@(cgl-merge-fl/eval merge))
+              ,(cg-push* 16 '(fl) '(fxarithmetic-shift-right cs 4) ip
+                         `(let* ((addr ,(cg+ idt (cgasl vec 2)))
+                                 (off (RAM addr 16))
+                                 (seg (RAM ,(cg+ 'addr 2) 16))
+                                 (cs ,(cgasl 'seg 4))
+                                 (fl (lambda ()
+                                       ,(cgand '(fl) (fxnot (fxior flag-IF
+                                                                   flag-TF
+                                                                   flag-AC))))))
+                            ,(return #f 'off))))))
       (if error-code
           (cg-push 16 error-code code)
           code)))
@@ -1658,10 +1665,9 @@
                                   (ip ,off))
                               ,(return merge 'ip))))))
              ((#x9C)                    ; pushfw / pushfd
-              (emit `(let* (,@(cgl-merge-fl merge))
-                       (let* ((fl^ (fl)) ;FIXME: clean up. Force one point of fl evaluation.
-                              (fl (lambda () fl^)))
-                         ,(cg-push eos '(fl) (continue #f ip))))))
+              (emit `(let* (,@(cgl-merge-fl/eval merge)
+                            (tmp ,(cgand '(fl) (bitwise-not (bitwise-ior flag-RF flag-VM)))))
+                       ,(cg-push eos 'tmp (continue #f ip)))))
              ((#x9D)                    ; popfw / popfd
               (emit
                (cg-pop eos 'tmp
