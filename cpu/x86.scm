@@ -1354,6 +1354,14 @@
   (define (cg-int-stack return merge start-ip)
     (%cg-int 12 0 return merge start-ip)) ;#SS
 
+  (define (cg-load-far-pointer sreg location modr/m eos continue merge ip)
+    `(let* ((addr ,location)
+            (off (RAM addr ,eos))
+            (seg (RAM ,(cg+ 'addr (/ eos 8)) 16)))
+       (let* (,@(cgl-reg-set modr/m eos 'off)
+              (,sreg ,(cgasl 'seg 4)))
+         ,(continue merge ip))))
+
   ;; Translate a basic block. This procedure reads instructions at
   ;; cs:ip until it finds a branch of some kind (or something
   ;; complicated), which ends the basic block. It returns a procedure
@@ -1459,6 +1467,23 @@
                                        ,(cgand #xffff (cg+ ip disp))
                                        ,ip)))
                            ,(return #f 'ip))))))
+                  ((#xA0)               ; push *FS
+                   (emit (cg-push 16 '(fxarithmetic-shift-right fs 4) (continue merge ip))))
+                  ((#xA1)               ; pop *FS
+                   (emit (cg-pop 16 'tmp `(let ((fs ,(cgasl 'tmp 4))) ,(continue merge ip)))))
+                  ((#xA8)               ; push *GS
+                   (emit (cg-push 16 '(fxarithmetic-shift-right gs 4) (continue merge ip))))
+                  ((#xA9)               ; pop *GS
+                   (emit (cg-pop 16 'tmp `(let ((gs ,(cgasl 'tmp 4))) ,(continue merge ip)))))
+                  ((#xB2 #xB4 #xB5)     ; lss Gv Mp, lfs Gv Mp, lgs Gv Mp
+                   (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                     (if (eq? store 'mem)
+                         (let ((sreg (case op1
+                                       ((#xB2) 'ss)
+                                       ((#xB4) 'fs)
+                                       ((#xB5) 'gs))))
+                           (emit (cg-load-far-pointer sreg location modr/m eos continue merge ip)))
+                         (emit (cg-int-invalid-opcode return merge start-ip)))))
                   ((#xB6 #xB7)          ; movzx Gv Eb, movzx Gv Ew
                    (let ((os (if (eqv? op1 #xB6) 8 16)))
                      (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
@@ -1852,15 +1877,10 @@
                               (return merge 'ip^)))))))
              ((#xC4 #xC5)               ; les Gz Mp, lds Gz Mp
               (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
-                (emit
-                 (if (eq? store 'mem)
-                     `(let* ((addr ,location)
-                             (off (RAM addr ,eos))
-                             (seg (RAM ,(cg+ 'addr (/ eos 8)) 16)))
-                        (let* (,@(cgl-reg-set modr/m eos 'off)
-                               (,(if (eqv? op #xC4) 'es 'ds) ,(cgasl 'seg 4)))
-                          ,(continue merge ip)))
-                     (emit (cg-int-invalid-opcode return merge start-ip))))))
+                (if (eq? store 'mem)
+                    (let ((sreg (if (eqv? op #xC4) 'es 'ds)))
+                      (emit (cg-load-far-pointer sreg location modr/m eos continue merge ip)))
+                    (emit (cg-int-invalid-opcode return merge start-ip)))))
              ((#xC6 #xC7)               ; Group 11
               (let ((eos (if (eqv? op #xC6) 8 eos)))
                 (with-r/m-operand ((ip store location modr/m)
