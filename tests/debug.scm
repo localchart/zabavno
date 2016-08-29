@@ -262,7 +262,6 @@
  '((mov di #x100)
    (mov si di)
    (%u8 #xa6))
-
  '((mov di #x100)
    (mov si di)
    (mov cx 1)
@@ -271,6 +270,11 @@
    (mov si di)
    (mov cx 0)
    (%u8 #xf3 #xa6))
+
+ ;; DAA, DAS
+ '((mov al #x79) (mov bl #x35) (add al bl) (daa))
+ '((mov al #x79) (mov bl #x35) (add al bl) (mov al #x2E) (mov bl #x35) (daa))
+ '((mov al #x35) (mov bl #x47) (sub al bl) (das))
 
  ;; SAR.
  '((mov al #b10000000)
@@ -403,6 +407,7 @@
  '((mov ax 6) (xor dx dx) (imul dx ax 7))
  '((mov ax -6) (xor dx dx) (imul dx ax -7))
  '((mov ax -32768) (xor dx dx) (imul dx ax -128))
+ '((mov dx 6) (mov ax 7) (imul dx ax))
 
  ;; F6 F7 DIV
  '((mov ax 42) (cwd) (mov cx 6) (div cx))

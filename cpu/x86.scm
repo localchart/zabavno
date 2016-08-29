@@ -780,6 +780,16 @@
 
   (define GROUP-4/5 '#(INC DEC CALL CALLF JMP JMPF PUSH #F))
 
+  (define (cg-SF result eos)
+    `(if ,(cgbit-set? result (fx- eos 1)) ,flag-SF 0))
+
+  (define (cg-ZF result)
+    `(if (eqv? ,result 0) ,flag-ZF 0))
+
+  (define (cg-PF result)
+    ;; TODO: LUT.
+    `(if (fxeven? (fxbit-count (fxand ,result #xff))) ,flag-PF 0))
+
   (define (cgl-arithmetic result result:u eos operator t0 t1)
     ;; TODO: Check the corner cases.
     (define (cgsub-overflow? a b result result-width)
@@ -799,13 +809,6 @@
                              (cgand b #b1111))
                         4)
            ,flag-AF 0))
-    (define (cg-ZF result)
-      `(if (eqv? ,result 0) ,flag-ZF 0))
-    (define (cg-SF result)
-      `(if ,(cgbit-set? result (fx- eos 1)) ,flag-SF 0))
-    (define (cg-PF result)
-      ;; TODO: LUT.
-      `(if (fxeven? (fxbit-count (fxand ,result #xff))) ,flag-PF 0))
     (define (cg-CF)
       `(if ,(cgbit-set? 'tmp eos) ,flag-CF 0))
     (case operator
@@ -820,7 +823,7 @@
          (tmp ,(cg+ 't0 't1))
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (if ,(cgadd-overflow? 't0 't1 result eos) ,flag-OF 0)))
-         (fl-SF (lambda () ,(cg-SF result)))
+         (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () ,(cg-AF cg+ 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))
@@ -832,7 +835,7 @@
          (tmp ,(cg+ (cg+ 't0 't1) '(fl-CF))) ;CF is bit 0
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (if ,(cgadd-overflow? 't0 't1 result eos) ,flag-OF 0)))
-         (fl-SF (lambda () ,(cg-SF result)))
+         (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () ,(cg-AF cg+ 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))
@@ -844,7 +847,7 @@
          (tmp ,(cgand 't0 't1))
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () 0))
-         (fl-SF (lambda () ,(cg-SF result)))
+         (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () ,(cg-PF result)))
@@ -880,7 +883,7 @@
          ;; destination.
          (fl-OF (lambda () (if (<= ,(- (expt 2 (- eos 1))) tmp ,(- (expt 2 (- eos 1)) 1))
                                0 ,flag-OF)))
-         (fl-SF (lambda () ,(cg-SF result))) ;undefined
+         (fl-SF (lambda () ,(cg-SF result eos))) ;undefined
          (fl-ZF (lambda () ,flag-ZF))        ;undefined
          (fl-AF (lambda () 0))               ;undefined
          (fl-PF (lambda () ,flag-PF))        ;undefined
@@ -893,7 +896,7 @@
          (tmp ,(cg+ 't0 't1))
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (if ,(cgadd-overflow? 't0 't1 result eos) ,flag-OF 0)))
-         (fl-SF (lambda () ,(cg-SF result)))
+         (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () ,(cg-AF cg+ 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))))
@@ -917,7 +920,7 @@
          (tmp ,(cg- 0 't0))
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (if ,(cgsub-overflow? 0 't0 result eos) ,flag-OF 0)))
-         (fl-SF (lambda () ,(cg-SF result)))
+         (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () ,(cg-AF cg- 0 't0)))
          (fl-PF (lambda () ,(cg-PF result)))
@@ -934,7 +937,7 @@
          (tmp ,(cgior 't0 't1))
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () 0))
-         (fl-SF (lambda () ,(cg-SF result)))
+         (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () ,(cg-PF result)))
@@ -1014,7 +1017,7 @@
          (,result tmp)
          (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
                                  (else 0)))) ;undefined for t1>1
-         (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result))))
+         (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result eos))))
          (fl-ZF (lambda () (if (eqv? t1 0) (fl-ZF) ,(cg-ZF result))))
          (fl-AF (lambda () (if (eqv? t1 0) (fl-AF) ,flag-AF))) ;undefined
          (fl-PF (lambda () (if (eqv? t1 0) (fl-PF) ,(cg-PF result))))
@@ -1029,7 +1032,7 @@
          (tmp ,(cg- (cg- 't0 't1) '(fl-CF))) ;CF is bit 0
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (if ,(cgsub-overflow? 't0 't1 result eos) ,flag-OF 0)))
-         (fl-SF (lambda () ,(cg-SF result)))
+         (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () ,(cg-AF cg- 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))
@@ -1046,7 +1049,7 @@
                                              ,(cgbit-set? 'tmp (fx- eos 1))))
                                   ,flag-OF)
                                  (else 0))))
-         (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result))))
+         (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result eos))))
          (fl-ZF (lambda () (if (eqv? t1 0) (fl-ZF) ,(cg-ZF result))))
          (fl-AF (lambda () (if (eqv? t1 0) (fl-AF) ,flag-AF))) ;undefined
          (fl-PF (lambda () (if (eqv? t1 0) (fl-PF) ,(cg-PF result))))
@@ -1065,7 +1068,7 @@
                                        ,(cgbit-set? 't0 (fx- eos 1)))
                                   ,flag-OF)
                                  (else 0))))
-         (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result))))
+         (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result eos))))
          (fl-ZF (lambda () (if (eqv? t1 0) (fl-ZF) ,(cg-ZF result))))
          (fl-AF (lambda () (if (eqv? t1 0) (fl-AF) ,flag-AF))) ;undefined
          (fl-PF (lambda () (if (eqv? t1 0) (fl-PF) ,(cg-PF result))))
@@ -1080,7 +1083,7 @@
          (tmp ,(cg- 't0 't1))
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (if ,(cgsub-overflow? 't0 't1 result eos) ,flag-OF 0)))
-         (fl-SF (lambda () ,(cg-SF result)))
+         (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () ,(cg-AF cg- 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))
@@ -1090,7 +1093,7 @@
        `((tmp ,(cgxor t0 t1))
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () 0))
-         (fl-SF (lambda () ,(cg-SF result)))
+         (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () 0))
          (fl-PF (lambda () ,(cg-PF result)))
@@ -1491,6 +1494,14 @@
                    (emit (cg-push 16 '(fxarithmetic-shift-right gs 4) (continue merge ip))))
                   ((#xA9)               ; pop *GS
                    (emit (cg-pop 16 'tmp `(let ((gs ,(cgasl 'tmp 4))) ,(continue merge ip)))))
+                  ((#xAF)               ; imul Gv Ev
+                   (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                     (emit
+                      `(let* (,@(cgl-arithmetic 'result '_ eos 'IMUL
+                                                (cg-reg-ref modr/m eos)
+                                                (cg-r/m-ref store location eos))
+                              ,@(cgl-reg-set modr/m eos 'result))
+                         ,(continue #t ip)))))
                   ((#xB2 #xB4 #xB5)     ; lss Gv Mp, lfs Gv Mp, lgs Gv Mp
                    (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                      (if (eq? store 'mem)
@@ -1525,14 +1536,38 @@
               (emit (cg-pop 16 'tmp `(let ((ds ,(cgasl 'tmp 4))) ,(continue merge ip)))))
              ((#x20 #x21 #x22 #x23 #x24 #x25)
               (emit (cg-arithmetic-group op 'AND ip cs dseg sseg eos eas continue)))
-             #;((#x27)
-                ;; daa
-                )
+             ;; #x27 daa is grouped with das below
              ((#x28 #x29 #x2A #x2B #x2C #x2D)
               (emit (cg-arithmetic-group op 'SUB ip cs dseg sseg eos eas continue)))
-             #;((#x2F)
-                ;; das
-                )
+             ((#x27 #x2F)               ; daa, das
+              (let ((fx^ (if (eqv? op #x27) 'fx+ 'fx-)))
+                ;; TODO: This results in terrible code that cp0
+                ;; doesn't do anything about, maybe it should just be
+                ;; put in a library and be done with.
+                (emit
+                 `(let*-values (((al AF old-CF)
+                                 (values ,(cg-register-ref idx-AX 8) (fl-AF) (fl-CF)))
+                                ((al AF CF)
+                                 (let ((nibble (fxbit-field al 0 4)))
+                                   (if (or (fx>? nibble 9) (not (eqv? AF 0)))
+                                       (values (,fx^ al #x06) ,flag-AF
+                                               ;; CF is set if al now has a carry/borrow.
+                                               (if (fxbit-set? (,fx^ nibble #x06) 4)
+                                                   ,flag-CF old-CF))
+                                       (values al 0 old-CF))))
+                                ((al AF CF)
+                                 (let ((nibble (fxbit-field al 4 8)))
+                                   (if (or (fx>? nibble 9) (not (eqv? old-CF 0)))
+                                       (values (,fx^ al #x60) AF ,flag-CF)
+                                       (values al AF 0)))))
+                    (let* (,@(cgl-register-update idx-AX 8 'al)
+                           (fl-OF (lambda () 0)) ;undefined
+                           (fl-SF (lambda () ,(cg-SF 'al 8)))
+                           (fl-ZF (lambda () ,(cg-ZF 'al)))
+                           (fl-AF (lambda () AF))
+                           (fl-PF (lambda () ,(cg-PF 'al)))
+                           (fl-CF (lambda () CF)))
+                      ,(continue #t ip))))))
              ((#x30 #x31 #x32 #x33 #x34 #x35)
               (emit (cg-arithmetic-group op 'XOR ip cs dseg sseg eos eas continue)))
              #;((#x37)
