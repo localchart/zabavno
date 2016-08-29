@@ -1084,13 +1084,12 @@
        (error 'cgl-arithmetic "TODO: Unimplemented operator" operator))))
 
   (define (cg-pop eos target k)
-    (let ((n (/ eos 8)))
-      ;; The target is a temporary variable, the register/memory write
-      ;; semantics are implemented by the caller.
-      `(let* ((,target (RAM ,(cg+ 'ss 'SP) ,eos))
-              ;; FIXME: SP width depends the code segment flag D and is changed with eas
-              ,@(cgl-register-update idx-SP eos (cg+ (cg-trunc 'SP eos) n)))
-         ,k)))
+    ;; The target is a temporary variable, the register/memory write
+    ;; semantics are implemented by the caller.
+    ;; FIXME: Check the stack-size.
+    `(let* ((,target (RAM ,(cg+ 'ss 'SP) ,eos))
+            ,@(cgl-register-update idx-SP eos (cg+ (cg-trunc 'SP eos) (/ eos 8))))
+       ,k))
 
   (define (cg-pop* eos x . x*)
     (if (null? x*)
@@ -1099,11 +1098,15 @@
 
   (define (cg-push eos expr k)
     (let ((n (/ eos 8)))
+      ;; On an 8086 the "push sp" instruction pushes SP after
+      ;; decrementing it, from 80286 and forward the original value is
+      ;; pushed.
       `(begin
-         ;; TODO: Use cg-int-stack (it needs merge, start-ip, return)
-         (assert (not (eqv? SP 1)))
-         (let* (,@(cgl-register-update idx-SP eos (cg- 'SP n))
-                (_ (RAM ,(cg+ 'ss (cg-trunc 'SP eos)) ,eos ,(cg-trunc expr eos))))
+         (assert (not (eqv? SP 1))) ; TODO: cg-int-stack (it needs
+                                    ; merge, start-ip, return)
+         (let* ((value ,(cg-trunc expr eos))
+                ,@(cgl-register-update idx-SP eos (cg- 'SP n))
+                (_ (RAM ,(cg+ 'ss (cg-trunc 'SP eos)) ,eos value)))
            ,k))))
 
   (define (cg-push* eos x . x*)
@@ -1412,23 +1415,25 @@
                     (sseg 'ss)       ;segment for stack references
                     (eos 16)         ;effective operand size
                     (eas 16)         ;effective address size
+                    (stack-size 16)  ;stack-size of the stack segment
                     (lock #f)
                     (repeat #f))
          ;; (print "Reading at CS:IP: " (hex (segment-selector cs)) ":" (hex ip))
          (with-instruction-u8* ((op <- cs ip))
            (case op
-             ;; Prefixes. TODO: Limit the number of prefixes read.
-             ((#x26) (prefix ip 'es 'es eos eas lock repeat))
-             ((#x2E) (prefix ip 'cs 'cs eos eas lock repeat))
-             ((#x36) (prefix ip 'ss 'ss eos eas lock repeat))
-             ((#x3E) (prefix ip 'ds 'ds eos eas lock repeat))
-             ((#x64) (prefix ip 'fs 'fs eos eas lock repeat))
-             ((#x65) (prefix ip 'gs 'gs eos eas lock repeat))
-             ((#x66) (prefix ip dseg sseg 32 eas lock repeat))
-             ((#x67) (prefix ip dseg sseg eos 32 lock repeat))
-             ((#xF0) (prefix ip dseg sseg eos eas #t repeat))
-             ((#xF2) (prefix ip dseg sseg eos eas lock 'nz))
-             ((#xF3) (prefix ip dseg sseg eos eas lock 'z))
+             ;; Prefixes. TODO: Limit the number of prefixes read, #UD
+             ;; for invalid locks.
+             ((#x26) (prefix ip 'es 'es eos eas stack-size lock repeat))
+             ((#x2E) (prefix ip 'cs 'cs eos eas stack-size lock repeat))
+             ((#x36) (prefix ip 'ss 'ss eos eas stack-size lock repeat))
+             ((#x3E) (prefix ip 'ds 'ds eos eas stack-size lock repeat))
+             ((#x64) (prefix ip 'fs 'fs eos eas stack-size lock repeat))
+             ((#x65) (prefix ip 'gs 'gs eos eas stack-size lock repeat))
+             ((#x66) (prefix ip dseg sseg 32 eas 32 lock repeat))
+             ((#x67) (prefix ip dseg sseg eos 32 stack-size lock repeat))
+             ((#xF0) (prefix ip dseg sseg eos eas stack-size #t repeat))
+             ((#xF2) (prefix ip dseg sseg eos eas stack-size lock 'nz))
+             ((#xF3) (prefix ip dseg sseg eos eas stack-size lock 'z))
              ;; Normal opcodes.
              ((#x00 #x01 #x02 #x03 #x04 #x05)
               (emit (cg-arithmetic-group op 'ADD ip cs dseg sseg eos eas continue)))
