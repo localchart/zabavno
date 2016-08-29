@@ -144,8 +144,7 @@
             ;; Other stuff
             (mutable IP)
             (mutable FLAGS)
-            (immutable translations)
-            (immutable translation-validity))
+            (immutable translations))
     (protocol
      (lambda (p)
        (lambda ()
@@ -162,7 +161,6 @@
             0 0 0 0 0 0
             ;; Other stuff
             0 (fxior flags-always-set flag-IF)
-            (make-eqv-hashtable)
             (make-eqv-hashtable))))))
 
   (define *current-machine*)
@@ -2095,7 +2093,7 @@
     ;; the same aligned 128-byte line as an existing translation.
     (fxarithmetic-shift-right address 7))
 
-  (define (generate-translation! translations cs ip debug instruction-limit)
+  (define (generate-translation! cs ip debug instruction-limit)
     (let ((trans (generate-translation cs ip debug instruction-limit)))
       (cond ((procedure? trans)
              trans)
@@ -2106,14 +2104,12 @@
              (eval trans code-env)))))
 
   (define (translate cs ip debug instruction-limit)
-    ;; TODO: only keep a fixed number of translations, and throw away
-    ;; the least recently used ones.
+    ;; TODO: Only keep the least recently used translations.
     (let* ((translations (machine-translations (current-machine)))
-           (validity (machine-translation-validity (current-machine)))
            (address (fw+ cs ip))
-           (line (translation-line-number address)))
-      (cond ((and (hashtable-contains? validity line)
-                  (hashtable-ref translations address #f)))
+           (line (translation-line-number address))
+           (line-table (hashtable-ref translations line #f)))
+      (cond ((and line-table (hashtable-ref line-table address #f)))
             (else
              ;; TODO: need to know how many bytes were translated, or
              ;; need to limit the translation to within a line.
@@ -2121,22 +2117,23 @@
              ;; inside a translation that is trying to invalidate
              ;; itself (although this is to some extent a problem even
              ;; with real hardware, and SMC is unusual).
-             (let ((trans (generate-translation! translations cs ip debug instruction-limit)))
-               (hashtable-set! translations address trans)
-               ;; FIXME: this is so buggy, since a new translation on the same line
-               ;; will mark other translations as valid. Should use a generation mark.
-               (hashtable-set! validity line #t)
+             (let ((trans (generate-translation! cs ip debug instruction-limit))
+                   (line-table (or line-table
+                                   (let ((line-table (make-eqv-hashtable)))
+                                     (hashtable-set! translations line line-table)
+                                     line-table))))
+               (hashtable-set! line-table address trans)
                trans)))))
 
   ;; There was an aligned write to the given address, invalidate any
   ;; cached translations.
   (define (invalidate-translation address)
-    (let ((validity (machine-translation-validity (current-machine)))
-          (line (translation-line-number address)))
-      (when (hashtable-contains? validity line)
+    (let ((line (translation-line-number address))
+          (translations (machine-translations (current-machine))))
+      (when (hashtable-contains? translations line)
         (when (machine-debug (current-machine))
           (print "cache: invalidated translation at address " address))
-        (hashtable-delete! validity line))))
+        (hashtable-delete! translations line))))
 
 ;;; Main loop
 
