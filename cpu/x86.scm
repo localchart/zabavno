@@ -2115,6 +2115,12 @@
              ((#xEB)                    ; jmp Jb
               (with-instruction-s8* ((disp <- cs ip))
                 (emit (return merge (fwand #xffff (fw+ ip disp))))))
+             ((#xEC #xED)               ; in *AL *DX, in *eAX *DX
+              (let ((eos (if (eqv? op #xEC) 8 eos)))
+                (emit `(let* ((port ,(cg-register-ref idx-DX 16))
+                              (value (I/O port ,eos))
+                              ,@(cgl-register-update idx-AX eos 'value))
+                         ,(continue merge ip)))))
              ((#xEE #xEF)               ; out *DX *AL, out *DX *eAX
               (let ((eos (if (eqv? op #xEE) 8 eos)))
                 (emit `(let ((port ,(cg-register-ref idx-DX 16))
@@ -2330,7 +2336,8 @@
             ((16) (memory-u16-set! addr value))
             ((32) (memory-u32-set! addr value))))
          ((write-i/o)
-          (print "I/O write: " (list addr size value))
+          (when (machine-debug (current-machine))
+            (print "I/O write: " (list addr size value)))
           #f)))
       ((command addr size)
        (case command
@@ -2340,8 +2347,12 @@
             ((16) (memory-u16-ref addr))
             ((32) (memory-u32-ref addr))))
          ((read-i/o)
-          (print "I/O read: " (list addr size))
-          #xff)))))
+          (when (machine-debug (current-machine))
+            (print "I/O read: " (list addr size)))
+          (case size
+            ((8) #xff)
+            ((16) #xffff)
+            ((32) #xffffffff)))))))
 
   (define (machine-run)
     (define M *current-machine*)
