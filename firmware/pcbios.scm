@@ -37,6 +37,7 @@
 
   (define-record-type bios
     (fields floppy-drives disk-drives
+            (mutable cursor-column) (mutable cursor-row)
             ;; DOS
             file-handles (mutable next-fh))
     (protocol
@@ -46,8 +47,8 @@
            (vector-set! file-handles 0 (current-input-port))
            (vector-set! file-handles 1 (current-output-port))
            (vector-set! file-handles 2 (current-error-port))
-           (p (make-vector 2 #f)
-              (make-vector 24 #f)
+           (p (make-vector 2 #f) (make-vector 24 #f)
+              1 1
               file-handles 3))))))
 
   (define (print . x)
@@ -137,6 +138,69 @@
                   (else
                    (lp (+ size n)))))))))
 
+  ;; Code page 437
+  (define cp437 (string #\x2007 #\x263A #\x263B #\x2665 #\x2666 #\x2663
+                        #\x2660 #\x2022 #\x25D8 #\x25CB #\x25D9 #\x2642
+                        #\x2640 #\x266A #\x266B #\x263C #\x25BA #\x25C4
+                        #\x2195 #\x203C #\x00B6 #\x00A7 #\x25AC #\x21A8
+                        #\x2191 #\x2193 #\x2192 #\x2190 #\x221F #\x2194
+                        #\x25B2 #\x25BC #\x0020 #\x0021 #\x0022 #\x0023
+                        #\x0024 #\x0025 #\x0026 #\x0027 #\x0028 #\x0029
+                        #\x002A #\x002B #\x002C #\x002D #\x002E #\x002F
+                        #\x0030 #\x0031 #\x0032 #\x0033 #\x0034 #\x0035
+                        #\x0036 #\x0037 #\x0038 #\x0039 #\x003A #\x003B
+                        #\x003C #\x003D #\x003E #\x003F #\x0040 #\x0041
+                        #\x0042 #\x0043 #\x0044 #\x0045 #\x0046 #\x0047
+                        #\x0048 #\x0049 #\x004A #\x004B #\x004C #\x004D
+                        #\x004E #\x004F #\x0050 #\x0051 #\x0052 #\x0053
+                        #\x0054 #\x0055 #\x0056 #\x0057 #\x0058 #\x0059
+                        #\x005A #\x005B #\x005C #\x005D #\x005E #\x005F
+                        #\x0060 #\x0061 #\x0062 #\x0063 #\x0064 #\x0065
+                        #\x0066 #\x0067 #\x0068 #\x0069 #\x006A #\x006B
+                        #\x006C #\x006D #\x006E #\x006F #\x0070 #\x0071
+                        #\x0072 #\x0073 #\x0074 #\x0075 #\x0076 #\x0077
+                        #\x0078 #\x0079 #\x007A #\x007B #\x007C #\x007D
+                        #\x007E #\x2302 #\x00C7 #\x00FC #\x00E9 #\x00E2
+                        #\x00E4 #\x00E0 #\x00E5 #\x00E7 #\x00EA #\x00EB
+                        #\x00E8 #\x00EF #\x00EE #\x00EC #\x00C4 #\x00C5
+                        #\x00C9 #\x00E6 #\x00C6 #\x00F4 #\x00F6 #\x00F2
+                        #\x00FB #\x00F9 #\x00FF #\x00D6 #\x00DC #\x00A2
+                        #\x00A3 #\x00A5 #\x20A7 #\x0192 #\x00E1 #\x00ED
+                        #\x00F3 #\x00FA #\x00F1 #\x00D1 #\x00AA #\x00BA
+                        #\x00BF #\x2310 #\x00AC #\x00BD #\x00BC #\x00A1
+                        #\x00AB #\x00BB #\x2591 #\x2592 #\x2593 #\x2502
+                        #\x2524 #\x2561 #\x2562 #\x2556 #\x2555 #\x2563
+                        #\x2551 #\x2557 #\x255D #\x255C #\x255B #\x2510
+                        #\x2514 #\x2534 #\x252C #\x251C #\x2500 #\x253C
+                        #\x255E #\x255F #\x255A #\x2554 #\x2569 #\x2566
+                        #\x2560 #\x2550 #\x256C #\x2567 #\x2568 #\x2564
+                        #\x2565 #\x2559 #\x2558 #\x2552 #\x2553 #\x256B
+                        #\x256A #\x2518 #\x250C #\x2588 #\x2584 #\x258C
+                        #\x2590 #\x2580 #\x03B1 #\x03B2 #\x0393 #\x03C0
+                        #\x03A3 #\x03C3 #\x00B5 #\x03C4 #\x03A6 #\x0398
+                        #\x03A9 #\x03B4 #\x221E #\x2205 #\x2208 #\x2229
+                        #\x2261 #\x00B1 #\x2265 #\x2264 #\x2320 #\x2321
+                        #\x00F7 #\x2248 #\x00B0 #\x2219 #\x00B7 #\x221A
+                        #\x207F #\x00B2 #\x25A0 #\x00A0))
+
+  ;; Code page 437 with control characters
+  (define cp437/control
+    (do ((tmp (list->vector (string->list cp437)))
+         (char* '(#\alarm #\backspace #\tab #\linefeed #\vtab #\page #\return #\delete)
+                (cdr char*)))
+        ((null? char*) (list->string (vector->list tmp)))
+      (vector-set! tmp (char->integer (car char*)) (car char*))))
+
+  (define (attribute->ansi-code attribute)
+    (let ((blink (if (fxbit-set? attribute 7) "5," ""))
+          (fg (vector-ref '#(30 34 32 36 31 35 33 37)
+                          (fxbit-field attribute 0 3)))
+          (bg (vector-ref '#(40 44 42 46 41 45 43 47)
+                          (fxbit-field attribute 4 7)))
+          (bright (if (fxbit-set? attribute 3) "1," "")))
+      (string-append "\x1b;[0," blink bright (number->string fg)
+                     "," (number->string bg) "m")))
+
   ;; Handle a BIOS interrupt.
   (define (pcbios-interrupt bios-data M vec)
     (define (not-implemented)
@@ -167,12 +231,50 @@
         ((#x07)
          (print "pcbios: No x87 emulation has been implemented/installed, exiting")
          'exit-dos)
-        ((#x10)
+        ((#x10)                         ;video emulation
          (case AH
+           ((#x01)                      ;set text-mode cursor shape
+            #f)
+           ((#x02)                      ;set cursor position
+            (let ((row (bitwise-bit-field (machine-DX M) 8 16))
+                  (column (bitwise-bit-field (machine-DX M) 0 8)))
+              (display (string-append "\x1b;[" (number->string (+ row 1))
+                                      "," (number->string (+ column 1)) "H"))
+              (bios-cursor-row-set! bios-data row)
+              (bios-cursor-column-set! bios-data row)))
+           ((#x06)                      ;TODO: scroll up window
+            (display (attribute->ansi-code (bitwise-bit-field (machine-BX M) 8 16)))
+            (display "\x1b;[2J"))
+           ((#x08)                      ;read character and attribute at cursor position
+            (let ((row (bios-cursor-row bios-data)) (column (bios-cursor-column bios-data)))
+              (machine-AX-set! M (bitwise-ior
+                                  (bitwise-and (machine-AX M) (fxnot #xFFFF))
+                                  (memory-u16-ref
+                                   (+ #xA0000 (* 2 (+ column (* row 80)))))))))
+           ((#x09)
+            (let ((char (bitwise-bit-field (machine-AX M) 0 8))
+                  (page (bitwise-bit-field (machine-BX M) 8 16))
+                  (attribute (bitwise-bit-field (machine-BX M) 0 8))
+                  (count (bitwise-bit-field (machine-CX M) 0 16)))
+              (display (attribute->ansi-code attribute))
+              (display (make-string count (string-ref cp437 char)))
+              (display "\x1b;[0m")))
            ((#x0E)
             ;; Write a character. TODO: color.
-            (display (integer->char (fxand (machine-AX M) #xff)))
+            (put-char (current-output-port)
+                      (string-ref cp437/control (fxand (machine-AX M) #xff)))
             (clear-CF))
+           ((#x0f)                      ;get current video mode
+            (let ((columns 80)
+                  (mode 3)
+                  (active-page 0))
+              (machine-AX-set! M (bitwise-ior
+                                  (fxarithmetic-shift-left columns 8)
+                                  mode
+                                  (bitwise-and (machine-AX M) (bitwise-not #xFFFF))))
+              (machine-BX-set! M (bitwise-ior
+                                  (fxarithmetic-shift-left active-page 8)
+                                  (bitwise-and (machine-BX M) (bitwise-not #xFFFF00FF))))))
            (else
             (not-implemented))))
         ((#x11)
@@ -302,7 +404,7 @@
             (not-implemented))))
         ((#x16)
          (case AH
-           ((#x00)                 ; get keystroke / get enhanced keystroke
+           ((#x00 #x10)       ; get keystroke / get enhanced keystroke
             (let* ((c (get-char (current-input-port)))
                    (c (if (eof-object? c) (integer->char 26) c))) ;Ctrl-Z
               (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xffff))
@@ -388,13 +490,14 @@
          (case AH
            ((#x02)                      ; write character to standard output
             (put-char (current-output-port)
-                      (integer->char (bitwise-bit-field (machine-DX M) 0 8))))
+                      (string-ref cp437/control (bitwise-bit-field (machine-DX M) 0 8))))
            ((#x09)                      ; Print a $-terminated string.
             (let lp ((i (machine-DX M)))
               (let* ((addr (fx+ (fx* (machine-DS M) 16) i))
-                     (char (integer->char (memory-u8-ref addr))))
-                (unless (eqv? char #\$)
-                  (display char)
+                     (char (memory-u8-ref addr)))
+                (unless (eqv? char (char->integer #\$))
+                  (put-char (current-output-port)
+                            (string-ref cp437/control char))
                   (unless (fx>? i #xffff)
                     (lp (fx+ i 1))))))
             (machine-AX-set! M (fxior #x0900 (char->integer #\$)))
@@ -571,6 +674,6 @@
             (not-implemented))))
         ((#x29)                         ;fast console output
          (put-char (current-output-port)
-                   (integer->char (bitwise-bit-field (machine-AX M) 0 8))))
+                   (string-ref cp437/control (bitwise-bit-field (machine-AX M) 0 8))))
         (else
          (not-implemented))))))
