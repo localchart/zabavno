@@ -417,12 +417,15 @@
  '((mov ax 6) (mov dx 7) (mul dx))
  '((mov ax 6) (mov dx 7) (mul dl))
  '((mov ax 3) (mul ax))
+ '((mov ah 88) (mov al 2) (mul ah))
 
  ;; IMUL
  '((mov ax 6) (xor dx dx) (imul dx ax 7))
  '((mov ax -6) (xor dx dx) (imul dx ax -7))
  '((mov ax -32768) (xor dx dx) (imul dx ax -128))
  '((mov dx 6) (mov ax 7) (imul dx ax))
+ '((mov dx 6) (mov ax -7) (cwd) (imul ax))
+ '((mov al 6) (mov bl -7) (imul bl))
 
  ;; F6 F7 DIV
  '((mov ax 42) (cwd) (mov cx 6) (div cx))

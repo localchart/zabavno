@@ -896,19 +896,20 @@
 
       ((IMUL)
        `((t0 ,(cg-recover-sign t0 eos))
-         (t1 ,t1)
+         (t1 ,(cg-recover-sign t1 eos))
          (tmp (* t0 t1))
          (,result ,(cg-trunc 'tmp eos))
          (,result:u ,(or (eqv? result:u '_)
-                         (cg-trunc '(bitwise-arithmetic-shift-right tmp eos) eos)))
+                         (cg-trunc `(bitwise-arithmetic-shift-right tmp ,eos) eos)))
          ;; CF and OF are set if the result did not fit in lower
          ;; destination.
+         (div-trap? #f)
          (fl-OF (lambda () (if (<= ,(- (expt 2 (- eos 1))) tmp ,(- (expt 2 (- eos 1)) 1))
                                0 ,flag-OF)))
-         (fl-SF (lambda () ,(cg-SF result eos))) ;undefined
-         (fl-ZF (lambda () ,flag-ZF))        ;undefined
-         (fl-AF (lambda () 0))               ;undefined
-         (fl-PF (lambda () ,flag-PF))        ;undefined
+         (fl-SF (lambda () 0))          ;undefined
+         (fl-ZF (lambda () ,flag-ZF))   ;undefined
+         (fl-AF (lambda () 0))          ;undefined
+         (fl-PF (lambda () ,flag-PF))   ;undefined
          (fl-CF (lambda () (if (<= ,(- (expt 2 (- eos 1))) tmp ,(- (expt 2 (- eos 1)) 1))
                                0 ,flag-CF)))))
 
@@ -927,9 +928,11 @@
        `((t0 ,t0)
          (t1 ,t1)
          (tmp (* t0 t1))
-         (,result tmp)
+         (,result ,(cg-trunc 'tmp eos))
+         (,result:u ,(cg-trunc `(bitwise-arithmetic-shift-right tmp ,eos) eos))
          ;; CF and OF are set if the result did not fit in lower
          ;; destination.
+         (div-trap? #f)
          (fl-OF (lambda () (if (>= ,result ,(expt 2 eos)) ,flag-OF 0)))
          (fl-SF (lambda () 0))          ;undefined
          (fl-ZF (lambda () 0))          ;undefined
@@ -2145,44 +2148,25 @@
                          (emit
                           `(let* (,@(cgl-arithmetic 'result #f eos 'TEST input imm))
                              ,(continue #t ip)))))
-                      ((NOT)
+                      ((NOT NEG)
                        (emit
-                        `(let* (,@(cgl-arithmetic 'result #f eos 'NOT input #f)
+                        `(let* (,@(cgl-arithmetic 'result #f eos operator input #f)
                                 ,@(cgl-r/m-set store location eos 'result))
                            ,(continue #t ip))))
-                      ((NEG)
-                       (emit
-                        `(let* (,@(cgl-arithmetic 'result #f eos 'NEG input #f)
-                                ,@(cgl-r/m-set store location eos 'result))
-                           ,(continue #t ip))))
-                      ((MUL)
-                       ;; Unsigned multiplication.
-                       (emit
-                        `(let* (,@(cgl-arithmetic 'result #f eos 'MUL input
-                                                  (cg-register-ref idx-AX eos)))
-                           ,(case eos
-                              ;; AX <- AL * input
-                              ((8)
-                               `(let* (,@(cgl-register-update idx-AX eos 'result))
-                                  ,(continue #t ip)))
-                              (else
-                               ;; DX:AX <- AX * input
-                               ;; EDX:EAX <- EAX * input
-                                        ;FIXME: this can use result:u.
-                               `(let* (,@(cgl-register-update idx-AX eos
-                                                              (cgand 'result (- (expt 2 eos) 1)))
-                                       ,@(cgl-register-update idx-DX eos
-                                                              (cgasr 'result eos)))
-                                  ,(continue #t ip)))))))
-                      ((DIV IDIV)
-                       ;; Division.
+                      (else
+                       ;; mul Eb, imul Eb, div Eb, idiv Eb, mul Ev,
+                       ;; imul Ev, div Ev, idiv Ev.
                        (case eos
                          ((8)
-                          ;; AL <- AX quotient input
-                          ;; AH <- AX remainder input
+                          ;; AX <- AL * input;
+                          ;; AL <- AX quotient input, AH <- AX remainder input
                           (emit
-                           `(let* (,@(cgl-arithmetic 'result:l 'result:u eos operator
-                                                     (cg-register-ref idx-AX 16) input))
+                           `(let* ((input0
+                                    ,(case operator
+                                       ((DIV IDIV) (cg-register-ref idx-AX 16))
+                                       ((MUL IMUL) (cg-register-ref idx-AX 8))))
+                                   ,@(cgl-arithmetic 'result:l 'result:u eos operator
+                                                     'input0 input))
                               (if div-trap?
                                   ,(cg-int-divide-by-zero-error return merge start-ip)
                                   (let* (,@(cgl-register-update idx-AX 16
@@ -2190,20 +2174,21 @@
                                                                        (cgasl 'result:u 8))))
                                     ,(continue #t ip))))))
                          (else
-                          ;; eAX <- eDX:eAX quotient input
-                          ;; eDX <- eDX:eAX remainder input
+                          ;; eDX:eAX <- eAX * input;
+                          ;; eAX <- eDX:eAX quotient input, eDX <- eDX:eAX remainder input
                           (emit
-                           `(let* ((dx:ax ,(cgior (cg-register-ref idx-AX eos)
-                                                  (cgasl (cg-register-ref idx-DX eos) eos)))
+                           `(let* ((input0
+                                    ,(case operator
+                                      ((DIV IDIV) (cgior (cg-register-ref idx-AX eos)
+                                                         (cgasl (cg-register-ref idx-DX eos) eos)))
+                                      ((MUL IMUL) (cg-register-ref idx-AX eos))))
                                    ,@(cgl-arithmetic 'result:l 'result:u eos operator
-                                                     'dx:ax input))
+                                                     'input0 input))
                               (if div-trap?
                                   ,(cg-int-divide-by-zero-error return merge start-ip)
                                   (let* (,@(cgl-register-update idx-AX eos 'result:l)
                                          ,@(cgl-register-update idx-DX eos 'result:u))
-                                    ,(continue #t ip))))))))
-                      (else
-                       (error 'generate-translation "TODO: Unary Group 3" operator)))))))
+                                    ,(continue #t ip)))))))))))))
              ((#xF8)                    ; clc
               (emit
                `(let* ((fl-CF (lambda () 0)))
