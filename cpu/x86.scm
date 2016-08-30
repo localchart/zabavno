@@ -1508,6 +1508,13 @@
                                        ,(cgand #xffff (cg+ ip disp))
                                        ,ip)))
                            ,(return #f 'ip))))))
+                  ((#x90 #x91 #x92 #x93 #x94 #x95 #x96 #x97 #x98 #x99 #x9A #x9B #x9C #x9D #x9E #x9F)
+                   ;; SETcc Eb
+                   (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                     (emit
+                      `(let (,@(cgl-r/m-set store location eos
+                                            `(if ,(cg-test-cc (fxand op1 #b1111)) 1 0)))
+                         ,(continue merge ip)))))
                   ((#xA0)               ; push *FS
                    (emit (cg-push 16 '(fxarithmetic-shift-right fs 4) (continue merge ip))))
                   ((#xA1)               ; pop *FS

@@ -254,6 +254,10 @@
 ;; for the emulator to save which flags are currently undefined.
 
 (run-tests
+ ;; SETcc.
+ '((stc) (setc al))
+ '((clc) (setc al))
+
  ;; Byte registers
  '((mov al 0) (mov ah 1) (mov bl 2) (mov bh 3)
    (mov cl 4) (mov ch 5) (mov dl 6) (mov dh 7))
