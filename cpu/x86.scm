@@ -88,7 +88,8 @@
   (define pretty-print
     (lambda (x) (write x) (newline)))
 
-  (define code-env (environment '(rnrs (6))
+  (define code-env (environment '(except (rnrs (6)) bitwise-rotate-bit-field)
+                                '(zabavno cpu compat)
                                 '(only (rnrs r5rs (6)) quotient remainder)))
 
   ;; For debug printing.
