@@ -79,8 +79,8 @@
           flag-OF flag-SF flag-ZF flag-AF flag-PF flag-CF
           flag-DF flag-IF flag-TF flag-AC
           print-flags)
-  (import (rnrs)
-          (rnrs eval))
+  (import (rnrs (6))
+          (rnrs eval (6)))
 
   ;; Fill memory with this u8 value.
   (define DEFAULT-MEMORY-FILL #xFF)
@@ -88,7 +88,8 @@
   (define pretty-print
     (lambda (x) (write x) (newline)))
 
-  (define code-env (environment '(rnrs)))
+  (define code-env (environment '(rnrs (6))
+                                '(only (rnrs r5rs (6)) quotient remainder)))
 
   ;; For debug printing.
   (define disassemble
@@ -864,6 +865,26 @@
          (,result tmp)
          (div-trap? (or div-by-zero (> tmp ,(- (expt 2 eos) 1))))
          (,result:u (if div-by-zero 0 (mod t0 t1)))
+         ;; All the flags are undefined.
+         (fl-OF (lambda () 0))          ;undefined
+         (fl-SF (lambda () 0))          ;undefined
+         (fl-ZF (lambda () 0))          ;undefined
+         (fl-AF (lambda () ,flag-AF))   ;undefined
+         (fl-PF (lambda () 0))          ;undefined
+         (fl-CF (lambda () 0))))        ;undefined
+
+      ((IDIV)
+       ;; This returns an extra variable: div-trap?. If it's true then
+       ;; the caller should raise a #DE.
+       `((t0 ,(cg-recover-sign t0 (* eos 2)))
+         (t1 ,(cg-recover-sign t1 eos))
+         (div-by-zero (eqv? t1 0))
+         (tmp (if div-by-zero 0 (quotient t0 t1)))
+         (,result ,(cg-trunc 'tmp eos))
+         (div-trap? (or div-by-zero (not (< ,(- (expt 2 (- (* eos 2) 1)))
+                                            tmp
+                                            ,(- (expt 2 (- (* eos 2) 1)) 1)))))
+         (,result:u (if div-by-zero 0 (remainder t0 t1)))
          ;; All the flags are undefined.
          (fl-OF (lambda () 0))          ;undefined
          (fl-SF (lambda () 0))          ;undefined
@@ -2145,14 +2166,14 @@
                                        ,@(cgl-register-update idx-DX eos
                                                               (cgasr 'result eos)))
                                   ,(continue #t ip)))))))
-                      ((DIV)
-                       ;; Unsigned division.
+                      ((DIV IDIV)
+                       ;; Division.
                        (case eos
                          ((8)
                           ;; AL <- AX quotient input
                           ;; AH <- AX remainder input
                           (emit
-                           `(let* (,@(cgl-arithmetic 'result:l 'result:u eos 'DIV
+                           `(let* (,@(cgl-arithmetic 'result:l 'result:u eos operator
                                                      (cg-register-ref idx-AX 16) input))
                               (if div-trap?
                                   ,(cg-int-divide-by-zero-error return merge start-ip)
@@ -2166,7 +2187,8 @@
                           (emit
                            `(let* ((dx:ax ,(cgior (cg-register-ref idx-AX eos)
                                                   (cgasl (cg-register-ref idx-DX eos) eos)))
-                                   ,@(cgl-arithmetic 'result:l 'result:u eos 'DIV 'dx:ax input))
+                                   ,@(cgl-arithmetic 'result:l 'result:u eos operator
+                                                     'dx:ax input))
                               (if div-trap?
                                   ,(cg-int-divide-by-zero-error return merge start-ip)
                                   (let* (,@(cgl-register-update idx-AX eos 'result:l)

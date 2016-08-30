@@ -258,6 +258,17 @@
  '((mov al 0) (mov ah 1) (mov bl 2) (mov bh 3)
    (mov cl 4) (mov ch 5) (mov dl 6) (mov dh 7))
 
+ ;; IDIV.
+ '((mov ax 13) (cwd) (mov bx 4) (idiv bx))
+ '((mov ax -13) (cwd) (mov bx 4) (idiv bx))
+ '((mov ax 13) (cwd) (mov bx -4) (idiv bx))
+ '((mov ax -13) (cwd) (mov bx -4) (idiv bx))
+
+ '((mov ax 13) (cwd) (mov bx 4) (idiv bl))
+ '((mov ax -13) (cwd) (mov bx 4) (idiv bl))
+ '((mov ax 13) (cwd) (mov bx -4) (idiv bl))
+ '((mov ax -13) (cwd) (mov bx -4) (idiv bl))
+
  ;; CMPS.
  '((mov di #x100)
    (mov si di)
