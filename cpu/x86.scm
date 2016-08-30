@@ -657,11 +657,14 @@
 ;;; Translation
 
   (define (cgand op0 op1)
-    (if (or (eqv? op0 0) (eqv? op1 0))
-        0
-        (if (> (fixnum-width) 32)
-            `(fxand ,op0 ,op1)
-            `(bitwise-and ,op0 ,op1))))
+    (cond ((or (eqv? op0 0) (eqv? op1 0))
+           0)
+          ((equal? op0 op1)
+           op0)
+          (else
+           (if (> (fixnum-width) 32)
+               `(fxand ,op0 ,op1)
+               `(bitwise-and ,op0 ,op1)))))
 
   (define (cgior op0 op1)
     (if (> (fixnum-width) 32)
@@ -843,10 +846,8 @@
          (fl-CF (lambda () ,(cg-CF)))))
 
       ((AND)
-       `((t0 ,t0)
-         (t1 ,t1)
-         (tmp ,(cgand 't0 't1))
-         (,result ,(cg-trunc 'tmp eos))
+       `((tmp ,(cgand t0 t1))
+         (,result tmp)
          (fl-OF (lambda () 0))
          (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
@@ -1700,9 +1701,9 @@
               (let ((eos (if (eqv? op #x84) 8 eos)))
                 (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                   (emit
-                   `(let* ((v0 ,(cg-r/m-ref store location eos))
-                           (v1 ,(cg-reg-ref modr/m eos))
-                           ,@(cgl-arithmetic 'result #f eos 'TEST 'v0 'v1))
+                   `(let* (,@(cgl-arithmetic 'result #f eos 'TEST
+                                             (cg-r/m-ref store location eos)
+                                             (cg-reg-ref modr/m eos)))
                       ,(continue #t ip))))))
              ((#x86 #x87)               ; xchg Eb Gb, xchg Ev Gv
               (let ((eos (if (eqv? op #x86) 8 eos)))
