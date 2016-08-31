@@ -86,7 +86,7 @@
   (define DEFAULT-MEMORY-FILL #xFF)
 
   (define pretty-print
-    (lambda (x) (write x) (newline)))
+    (lambda (x) (write x (current-error-port)) (newline (current-error-port))))
 
   (define code-env (environment '(except (rnrs (6)) bitwise-rotate-bit-field)
                                 '(zabavno cpu compat)
@@ -209,9 +209,12 @@
                                  (fx+ scaled-cs
                                       (fxand #xffff (fx+ ip i)))))))
 
-  (define (print . x) (for-each display x) (newline))
+  (define (print . x*)
+    (for-each (lambda (x) (display x (current-error-port))) x*)
+    (newline (current-error-port)))
 
-  (define (print* . x) (for-each display x))
+  (define (print* . x*)
+    (for-each (lambda (x) (display x (current-error-port))) x*))
 
   (define hex
     (case-lambda
@@ -322,8 +325,8 @@
          (flag* flag* (cdr flag*)))
         ((fxzero? m))
       (unless (fxzero? (fxand m fl))
-        (display #\space)
-        (display (car flag*)))))
+        (display #\space (current-error-port))
+        (display (car flag*) (current-error-port)))))
 
   (define flag-OF (expt 2 11))          ;overflow
   (define flag-SF (expt 2 7))           ;sign
@@ -372,9 +375,7 @@
       (syntax-case x ()
         #;
         ((_ . x*)
-         #'(begin
-             (for-each display (list . x*))
-             (newline)))
+         #'(print . x*))
         ((_ . x*)
          #'(values)))))
 
@@ -390,12 +391,12 @@
   (define (print-memory addr len)
     (do ((i 0 (fx+ i 1)))
         ((fx=? i len)
-         (newline))
+         (newline (current-error-port)))
       (let ((v (memory-u8-ref (fx+ addr i))))
-        (display #\space)
+        (display #\space (current-error-port))
         (when (fx<? v #x10)
-          (display #\0))
-        (display (hex v)))))
+          (display #\0 (current-error-port)))
+        (display (hex v) (current-error-port)))))
 
   (define (copy-from-memory addr len)
     (do ((ret (make-bytevector len))
@@ -2394,12 +2395,12 @@
                 "  IP=" (hex ip 4)
                 "  ")
         (print-flags fl)
-        (newline)
-        (display "SS:SP: ")
+        (newline (current-error-port))
+        (print* "SS:SP: ")
         (print-memory (fx+ ss SP) 16)
-        ;; (display "@SS:BP: ")
+        ;; (print* "@SS:BP: ")
         ;; (display-memory (fx+ ss BP) 16)
-        (display "CS:IP: ")
+        (print* "CS:IP: ")
         (print-memory (fx+ cs ip) 16))
 
       (let ((trans (translate cs ip debug (if trace 1 32))))

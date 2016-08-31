@@ -192,14 +192,14 @@
       (vector-set! tmp (char->integer (car char*)) (car char*))))
 
   (define (attribute->ansi-code attribute)
-    (let ((blink (if (fxbit-set? attribute 7) "5," ""))
+    (let ((blink (if (fxbit-set? attribute 7) "5;" ""))
           (fg (vector-ref '#(30 34 32 36 31 35 33 37)
                           (fxbit-field attribute 0 3)))
           (bg (vector-ref '#(40 44 42 46 41 45 43 47)
                           (fxbit-field attribute 4 7)))
-          (bright (if (fxbit-set? attribute 3) "1," "")))
-      (string-append "\x1b;[0," blink bright (number->string fg)
-                     "," (number->string bg) "m")))
+          (bright (if (fxbit-set? attribute 3) "1;" "")))
+      (string-append "\x1b;[0;" blink bright (number->string fg)
+                     ";" (number->string bg) "m")))
 
   ;; Handle a BIOS interrupt.
   (define (pcbios-interrupt bios-data M vec)
@@ -239,12 +239,34 @@
             (let ((row (bitwise-bit-field (machine-DX M) 8 16))
                   (column (bitwise-bit-field (machine-DX M) 0 8)))
               (display (string-append "\x1b;[" (number->string (+ row 1))
-                                      "," (number->string (+ column 1)) "H"))
+                                      ";" (number->string (+ column 1)) "H"))
               (bios-cursor-row-set! bios-data row)
               (bios-cursor-column-set! bios-data row)))
-           ((#x06)                      ;TODO: scroll up window
-            (display (attribute->ansi-code (bitwise-bit-field (machine-BX M) 8 16)))
-            (display "\x1b;[2J"))
+
+           ((#x06 #x07)                 ;scroll up/down window
+            ;; XXX: The left-right stuff probably only works with
+            ;; xterm, it's something that terminfo/curses should be
+            ;; used for.
+            ;; http://ttssh2.osdn.jp/manual/en/about/ctrlseq.html
+            (let ((attribute (bitwise-bit-field (machine-BX M) 8 16))
+                  (lines (bitwise-bit-field (machine-AX M) 0 8))
+                  (left (bitwise-bit-field (machine-CX M) 0 8))
+                  (top (bitwise-bit-field (machine-CX M) 8 16))
+                  (right (bitwise-bit-field (machine-DX M) 0 8))
+                  (bottom (bitwise-bit-field (machine-DX M) 8 16)))
+              (let ((lines (if (zero? lines)
+                               (- bottom top -1)
+                               lines)))
+                (display (attribute->ansi-code attribute))
+                (display "\x1b;[?6h\x1b;[?69h") ;enable margins
+                (display (string-append "\x1b;[" (number->string (+ top 1))
+                                        ";" (number->string (+ bottom 1)) "r"
+                                        "\x1b;[" (number->string (+ left 1))
+                                        ";" (number->string (+ right 1)) "s"))
+                (display (string-append "\x1b;[" (number->string lines)
+                                        (if (eqv? AH #x06) "S" "T")))
+                (display "\x1b;[?6l\x1b;[?69l") ;disable margins
+                (display "\x1b;[0m"))))
            ((#x08)                      ;read character and attribute at cursor position
             (let ((row (bios-cursor-row bios-data)) (column (bios-cursor-column bios-data)))
               (machine-AX-set! M (bitwise-ior
