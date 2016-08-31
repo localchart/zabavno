@@ -52,7 +52,7 @@
 (define (help)
   (display "The zabavno machine emulator test program\n\
 Usage: zabavno [--debug] [--trace] [--args <program-args...>] <program-image>\n\
-The image may be a DOS .com file or a PC boot sector.\n"
+The image may be a DOS .com file, DOS .exe file or a bootable PC floppy image.\n"
            (current-error-port))
   (exit 1))
 
