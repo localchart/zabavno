@@ -70,10 +70,8 @@ possible to run with the Zabavno BIOS, since for some applications it
 will not be reasonable to keep around hardware emulation and the Bochs
 BIOS.
 
-The Zabavno BIOS can be improved with support for additional calls.
-The keyboard support is currently very lacking due to the lack of a
-char-ready? procedure in R6RS, it should be possible to write such a
-procedure for a few Schemes.
+The Zabavno BIOS can be improved with support for additional calls,
+including setting video modes and improved keyboard support.
 
 Modularity is a big concern when developing this library. Hard
 dependencies on anything outside of the core R6RS libraries should be

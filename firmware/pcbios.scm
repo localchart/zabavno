@@ -33,6 +33,7 @@
           pcbios-interrupt)
   (import (rnrs (6))
           (zabavno cpu x86)
+          (zabavno firmware compat)
           #;(weinholt text hexdump))
 
   (define-record-type bios
@@ -190,6 +191,12 @@
                 (cdr char*)))
         ((null? char*) (list->string (vector->list tmp)))
       (vector-set! tmp (char->integer (car char*)) (car char*))))
+
+  (define inverse-cp437
+    (do ((ret (make-eqv-hashtable))
+         (i 0 (fx+ i 1)))
+        ((fx=? i (string-length cp437)) ret)
+      (hashtable-set! ret (string-ref cp437 i) i)))
 
   (define (attribute->ansi-code attribute)
     (let ((blink (if (fxbit-set? attribute 7) "5;" ""))
@@ -424,27 +431,38 @@
             (clear-CF))
            (else
             (not-implemented))))
-        ((#x16)
-         (case AH
-           ((#x00 #x10)       ; get keystroke / get enhanced keystroke
-            (let* ((c (get-char (current-input-port)))
-                   (c (if (eof-object? c) (integer->char 26) c))) ;Ctrl-Z
-              (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xffff))
-                                        (fx* #x0101 (fxand (char->integer c) #xff))))))
-           ((#;#x01 #x11
-             ) ; check for keystroke / check for enhanced keystroke
-            ;; Set ZF to indicate that no keystroke is available.
-            ;; TODO: Can't be done with current-input-port in pure R6RS.
-            (let ((addr (real-pointer (machine-SS M) (+ (machine-SP M) 4))))
-              #;(memory-u16-set! addr (fxand (fxnot flag-ZF) (memory-u16-ref addr)))
-              (memory-u16-set! addr (fxior flag-ZF (memory-u16-ref addr)))))
-           ((#x02)                      ; get shift flags
-            (let ((flags 0))
-              (machine-AX-set! M (bitwise-ior flags
-                                              (bitwise-and (machine-AX M) (bitwise-not #xff))))))
-           (else
-            (print "pcbios: Unhandled BIOS keyboard INT #x" (number->string vec 16)
-                   " AH=#x" (number->string AH 16)))))
+        ((#x16)                         ;KEYBOARD
+         (letrec ((return-character
+                   (lambda (c)
+                     (let ((code (cond ((eof-object? c) (fxand (char->integer #\Z) 31)) ;Ctrl-Z
+                                       ((char=? c #\linefeed) (char->integer #\return))
+                                       ((hashtable-ref inverse-cp437 c (char->integer c))))))
+                       ;; TODO: This should really also be converting to scancodes.
+                       (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xffff))
+                                                 (fx* #x0101 (fxand code #xff))))))))
+           (case AH
+             ((#x00 #x10)     ; get keystroke / get enhanced keystroke
+              (return-character (get-char (current-input-port))))
+             ((#;#x01 #x11) ; check for keystroke / check for enhanced keystroke
+              ;; Function AH=01h is disabled because it interferes
+              ;; with MS-DOS startup.
+              (let ((addr (real-pointer (machine-SS M) (+ (machine-SP M) 4))))
+                (cond ((input-port-ready? (current-input-port))
+                       (memory-u16-set! addr (fxand (fxnot flag-ZF) (memory-u16-ref addr)))
+                       (return-character (peek-char (current-input-port))))
+                      (else
+                       ;; Set ZF to indicate that no keystroke is available.
+                       (memory-u16-set! addr (fxior flag-ZF (memory-u16-ref addr)))))))
+             ((#x02)                      ; get shift flags
+              (let ((flags 0))
+                (machine-AX-set! M (bitwise-ior flags
+                                                (bitwise-and (machine-AX M) (bitwise-not #xff))))))
+             ((#x92)                    ;keyb.com keyboard capabilities check
+              ;; Enhanced keystroke support
+              (machine-AX-set! M (bitwise-ior #x80 (bitwise-and (machine-AX M) (bitwise-not #xff)))))
+             (else
+              (print "pcbios: Unhandled BIOS keyboard INT #x" (number->string vec 16)
+                     " AH=#x" (number->string AH 16))))))
         ((#x17)
          (case AH
            ((#x01)
