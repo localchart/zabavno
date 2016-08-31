@@ -174,10 +174,12 @@
   (define (capture thunk)
     (let-values (((port extract) (open-string-output-port)))
       (if *capture-stdout*
-          (with-output-to-port port
-                               (lambda ()
-                                 (let ((ret (thunk)))
-                                   (values ret (extract)))))
+          (with-output-to-port
+           port (lambda ()
+                  (with-error-to-port
+                   port (lambda ()
+                          (let ((ret (thunk)))
+                            (values ret (extract)))))))
           (let ((ret (thunk)))
             (values ret "")))))
   ;; Make a copy of debug's original registers.
@@ -254,9 +256,13 @@
 ;; for the emulator to save which flags are currently undefined.
 
 (run-tests
+ ;; SHRD.
+ '((mov ax #xabcd) (mov dx #x0123) (shrd ax dx 4))
+ '((mov ax #xabcd) (mov dx #x0123) (mov cl 5) (shrd ax dx cl))
+
  ;; SETcc.
- '((stc) (setc al))
- '((clc) (setc al))
+ '((mov ax #xabcd) (stc) (setc al))
+ '((mov ax #xabcd) (clc) (setc al))
 
  ;; Byte registers
  '((mov al 0) (mov ah 1) (mov bl 2) (mov bh 3)

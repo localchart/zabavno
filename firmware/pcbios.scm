@@ -272,7 +272,7 @@
               (machine-AX-set! M (bitwise-ior
                                   (bitwise-and (machine-AX M) (fxnot #xFFFF))
                                   (memory-u16-ref
-                                   (+ #xA0000 (* 2 (+ column (* row 80)))))))))
+                                   (+ #xB8000 (* 2 (+ column (* row 80)))))))))
            ((#x09)
             (let ((char (bitwise-bit-field (machine-AX M) 0 8))
                   (page (bitwise-bit-field (machine-BX M) 8 16))
@@ -657,7 +657,7 @@
                        (let* ((addr (real-pointer (machine-DS M) (+ (machine-DX M) i)))
                               (byte (memory-u8-ref addr)))
                          (cond ((< file-handle 3)
-                                (put-char port (integer->char byte)))
+                                (put-char port (string-ref cp437/control byte)))
                                (else
                                 (put-u8 port byte)))))))))
            ((#x42)                      ; set current file position

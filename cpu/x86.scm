@@ -1104,6 +1104,20 @@
                                    ,flag-CF
                                    0))))))
 
+      ((SHRD)
+       `((t0 ,t0)
+         (t1 ,(cgand t1 #b00011111))
+         (tmp ,(cgasr 't0 't1))
+         (,result ,(cg-trunc 'tmp eos))
+         (fl-OF (lambda () 0))          ;undefined
+         (fl-SF (lambda () ,(cg-SF result eos)))
+         (fl-ZF (lambda () ,(cg-ZF result)))
+         (fl-AF (lambda () 0))          ;undefined
+         (fl-PF (lambda () ,(cg-PF result)))
+         (fl-CF (lambda () (if ,(cgbit-set? 't0 (cg- 't1 1))
+                               ,flag-CF
+                               0)))))
+
       ((SUB)
        `((t0 ,t0)
          (t1 ,t1)
@@ -1517,7 +1531,7 @@
                    ;; SETcc Eb
                    (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                      (emit
-                      `(let (,@(cgl-r/m-set store location eos
+                      `(let (,@(cgl-r/m-set store location 8
                                             `(if ,(cg-test-cc (fxand op1 #b1111)) 1 0)))
                          ,(continue merge ip)))))
                   ((#xA0)               ; push *FS
@@ -1528,6 +1542,26 @@
                    (emit (cg-push 16 '(fxarithmetic-shift-right gs 4) (continue merge ip))))
                   ((#xA9)               ; pop *GS
                    (emit (cg-pop 16 'tmp `(let ((gs ,(cgasl 'tmp 4))) ,(continue merge ip)))))
+                  ((#xAC)               ; shrd Ev Gv Ib
+                   (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                     (with-instruction-u8* ((imm <- cs ip))
+                       (emit
+                        `(let* ((input (bitwise-ior
+                                        (bitwise-arithmetic-shift-left ,(cg-reg-ref modr/m eos) ,eos)
+                                        ,(cg-r/m-ref store location eos)))
+                                ,@(cgl-arithmetic 'result #f eos 'SHRD 'input imm)
+                                ,@(cgl-r/m-set store location eos 'result))
+                           ,(continue #t ip))))))
+                  ((#xAD)               ; shrd Ev Gv *CL
+                   (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                     (emit
+                      `(let* ((input (bitwise-ior
+                                      (bitwise-arithmetic-shift-left ,(cg-reg-ref modr/m eos) ,eos)
+                                      ,(cg-r/m-ref store location eos)))
+                              ,@(cgl-arithmetic 'result #f eos 'SHRD
+                                                'input (cg-register-ref idx-CX 8))
+                              ,@(cgl-r/m-set store location eos 'result))
+                         ,(continue #t ip)))))
                   ((#xAF)               ; imul Gv Ev
                    (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                      (emit
@@ -1937,8 +1971,7 @@
              ((#xC0 #xC1)
               ;; Shift Group 2. Eb Ib, Ev Ib.
               (let ((eos (if (eqv? op #xC0) 8 eos)))
-                (with-r/m-operand ((ip store location modr/m)
-                                   (cs ip dseg sseg eas))
+                (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                   (with-instruction-u8* ((imm <- cs ip))
                     (let ((operator (vector-ref GROUP-2 (ModR/M-reg modr/m))))
                       (emit

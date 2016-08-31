@@ -107,7 +107,10 @@
         (machine-SS-set! M (fxand (+ load-segment ss) #xffff))
         (machine-SP-set! M sp)
         ;; Load the image
-        (let* ((load-module-size (- (- (* blocks-in-file 512) bytes-in-last-block)
+        (let* ((load-module-size (- (- (* blocks-in-file 512)
+                                       (if (zero? bytes-in-last-block)
+                                           0
+                                           (- 512 bytes-in-last-block)))
                                     (* header-paragraphs 16))))
           (set-port-position! image-port (* header-paragraphs 16))
           (copy-to-memory (real-pointer (machine-CS M) (machine-IP M))
