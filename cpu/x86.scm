@@ -791,6 +791,8 @@
 
   (define GROUP-4/5 '#(INC DEC CALL CALLF JMP JMPF PUSH #F))
 
+  (define GROUP-8 '#(#F #F #F #F BT BTS BTR BTC))
+
   (define (cg-SF result eos)
     `(if ,(cgbit-set? result (fx- eos 1)) ,flag-SF 0))
 
@@ -879,6 +881,82 @@
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () ,(cg-PF result)))
          (fl-CF (lambda () 0))))
+
+      ((BSF)
+       `((t0 ,t0)
+         (t1 ,t1)
+         (tmp (cond ((eqv? t1 0) t0)
+                    (,(fx>? (fixnum-width) eos) (fxfirst-bit-set t1))
+                    (else (bitwise-first-bit-set t1))))
+         (,result tmp)
+         (fl-OF (lambda () 0))          ;undefined
+         (fl-SF (lambda () 0))          ;undefined
+         (fl-ZF (lambda () (if (eqv? t1 0) ,flag-ZF 0)))
+         (fl-AF (lambda () 0))          ;undefined
+         (fl-PF (lambda () 0))          ;undefined
+         (fl-CF (lambda () 0))))        ;undefined
+
+      ((BSR)
+       `((t0 ,t0)
+         (t1 ,t1)
+         (tmp (cond ((eqv? t1 0) t0)
+                    (,(fx>? (fixnum-width) eos) (fx- (fxlength t1) 1))
+                    (else (fx- (bitwise-length t1) 1))))
+         (,result tmp)
+         (fl-OF (lambda () 0))          ;undefined
+         (fl-SF (lambda () 0))          ;undefined
+         (fl-ZF (lambda () (if (eqv? t1 0) ,flag-ZF 0)))
+         (fl-AF (lambda () 0))          ;undefined
+         (fl-PF (lambda () 0))          ;undefined
+         (fl-CF (lambda () 0))))        ;undefined
+
+      ((BT)
+       `((t0 ,t0)
+         (t1 ,(cgand t1 (cg- eos 1)))
+         (tmp ,t0)
+         (,result tmp)
+         (fl-OF (lambda () 0))          ;undefined
+         (fl-SF (lambda () 0))          ;undefined
+         (fl-ZF (lambda () 0))          ;undefined
+         (fl-AF (lambda () 0))          ;undefined
+         (fl-PF (lambda () 0))          ;undefined
+         (fl-CF (lambda () (if ,(cgbit-set? 't0 't1) ,flag-CF 0)))))
+
+      ((BTC)
+       `((t0 ,t0)
+         (t1 ,(cgand t1 (cg- eos 1)))
+         (tmp ,(cgxor 't0 (cgasl 1 't1)))
+         (,result tmp)
+         (fl-OF (lambda () 0))          ;undefined
+         (fl-SF (lambda () 0))          ;undefined
+         (fl-ZF (lambda () 0))          ;undefined
+         (fl-AF (lambda () 0))          ;undefined
+         (fl-PF (lambda () 0))          ;undefined
+         (fl-CF (lambda () (if ,(cgbit-set? 't0 't1) ,flag-CF 0)))))
+
+      ((BTR)
+       `((t0 ,t0)
+         (t1 ,(cgand t1 (cg- eos 1)))
+         (tmp ,(cgand 't0 `(,(if (fx>? (fixnum-width) eos) 'fxnot 'bitwise-not) ,(cgasl 1 't1))))
+         (,result tmp)
+         (fl-OF (lambda () 0))          ;undefined
+         (fl-SF (lambda () 0))          ;undefined
+         (fl-ZF (lambda () 0))          ;undefined
+         (fl-AF (lambda () 0))          ;undefined
+         (fl-PF (lambda () 0))          ;undefined
+         (fl-CF (lambda () (if ,(cgbit-set? 't0 't1) ,flag-CF 0)))))
+
+      ((BTS)
+       `((t0 ,t0)
+         (t1 ,(cgand t1 (cg- eos 1)))
+         (tmp ,(cgior 't0 (cgasl 1 't1)))
+         (,result tmp)
+         (fl-OF (lambda () 0))          ;undefined
+         (fl-SF (lambda () 0))          ;undefined
+         (fl-ZF (lambda () 0))          ;undefined
+         (fl-AF (lambda () 0))          ;undefined
+         (fl-PF (lambda () 0))          ;undefined
+         (fl-CF (lambda () (if ,(cgbit-set? 't0 't1) ,flag-CF 0)))))
 
       ((DIV)
        ;; This returns an extra variable: div-trap?. If it's true then
@@ -1561,6 +1639,7 @@
                    (emit (cg-push 16 '(fxarithmetic-shift-right fs 4) (continue merge ip))))
                   ((#xA1)               ; pop *FS
                    (emit (cg-pop 16 'tmp `(let ((fs ,(cgasl 'tmp 4))) ,(continue merge ip)))))
+                  ;; A3 BT is grouped with BTC
                   ((#xA4)               ; shld Ev Gv Ib
                    (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                      (with-instruction-u8* ((imm <- cs ip))
@@ -1584,6 +1663,7 @@
                    (emit (cg-push 16 '(fxarithmetic-shift-right gs 4) (continue merge ip))))
                   ((#xA9)               ; pop *GS
                    (emit (cg-pop 16 'tmp `(let ((gs ,(cgasl 'tmp 4))) ,(continue merge ip)))))
+                  ;; AB BTS is grouped with BTC
                   ((#xAC)               ; shrd Ev Gv Ib
                    (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                      (with-instruction-u8* ((imm <- cs ip))
@@ -1612,6 +1692,7 @@
                                                 (cg-r/m-ref store location eos))
                               ,@(cgl-reg-set modr/m eos 'result))
                          ,(continue #t ip)))))
+                  ;; B3 BTR is grouped with BTC
                   ((#xB2 #xB4 #xB5)     ; lss Gv Mp, lfs Gv Mp, lgs Gv Mp
                    (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                      (if (eq? store 'mem)
@@ -1627,6 +1708,41 @@
                        (emit
                         `(let* (,@(cgl-reg-set modr/m eos (cg-r/m-ref store location os)))
                            ,(continue merge ip))))))
+                  ((#xBA)               ; bt Ev Ib, bts Ev Ib, btr Ev Ib, btc Ev Ib
+                   (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                     (with-instruction-u8* ((imm <- cs ip))
+                       (let ((operator (vector-ref GROUP-8 (ModR/M-reg modr/m))))
+                         (if operator
+                             (emit
+                              `(let* (,@(cgl-arithmetic 'result '_ eos operator
+                                                        (cg-r/m-ref store location eos)
+                                                        imm)
+                                      ,@(cgl-r/m-set store location eos 'result))
+                                 ,(continue #t ip)))
+                             (emit (cg-int-invalid-opcode return merge start-ip)))))))
+                  ((#xA3 #xAB #xB3 #xBB) ; bt Ev Gv, bts Ev Gv, btr Ev Gv, btc Ev Gv
+                   (let ((operator
+                          (case op1
+                            ((#xA3) 'BT)
+                            ((#xAB) 'BTS)
+                            ((#xB3) 'BTR)
+                            ((#xBB) 'BTC))))
+                     (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                       (emit
+                        `(let* (,@(cgl-arithmetic 'result '_ eos operator
+                                                  (cg-r/m-ref store location eos)
+                                                  (cg-reg-ref modr/m eos))
+                                ,@(cgl-r/m-set store location eos 'result))
+                           ,(continue #t ip))))))
+                  ((#xBC #xBD)          ; bsf Gv Ev, bsr Gv Ev
+                   (let ((operator (if (eqv? op1 #xBC) 'BSF 'BSR)))
+                     (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                       (emit
+                        `(let* (,@(cgl-arithmetic 'result '_ eos operator
+                                                  (cg-reg-ref modr/m eos)
+                                                  (cg-r/m-ref store location eos))
+                                ,@(cgl-reg-set modr/m eos 'result))
+                           ,(continue #t ip))))))
                   (else
                    (if (not first?)
                        (emit (return merge start-ip))

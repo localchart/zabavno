@@ -256,6 +256,43 @@
 ;; for the emulator to save which flags are currently undefined.
 
 (run-tests
+ ;; BT, BTC, BTR, BTS
+ '((stc) (mov ax #x1248) (mov dx 4) (bt ax dx))
+ '((stc) (mov ax #x1248) (mov dx 15) (bt ax dx))
+ '((stc) (mov ax #x1248) (mov dx 16) (bt ax dx))
+ '((stc) (mov ax #x1248) (mov dx 0) (btc ax dx))
+ '((stc) (mov ax #x1248) (mov dx 15) (btc ax dx))
+ '((stc) (mov ax #x1248) (mov dx 16) (btc ax dx))
+ '((stc) (mov ax #x1248) (mov dx 0) (btr ax dx))
+ '((stc) (mov ax #x1248) (mov dx 15) (btr ax dx))
+ '((stc) (mov ax #x1248) (mov dx 16) (btr ax dx))
+ '((stc) (mov ax #x1248) (mov dx 0) (bts ax dx))
+ '((stc) (mov ax #x1248) (mov dx 15) (bts ax dx))
+ '((stc) (mov ax #x1248) (mov dx 16) (bts ax dx))
+
+ '((stc) (mov ax #x1248) (bt ax 4))
+ '((stc) (mov ax #x1248) (bt ax 15))
+ '((stc) (mov ax #x1248) (bt ax 16))
+ '((stc) (mov ax #x1248) (btc ax 0))
+ '((stc) (mov ax #x1248) (btc ax 15))
+ '((stc) (mov ax #x1248) (btc ax 16))
+ '((stc) (mov ax #x1248) (btr ax 0))
+ '((stc) (mov ax #x1248) (btr ax 15))
+ '((stc) (mov ax #x1248) (btr ax 16))
+ '((stc) (mov ax #x1248) (bts ax 0))
+ '((stc) (mov ax #x1248) (bts ax 15))
+ '((stc) (mov ax #x1248) (bts ax 16))
+
+ ;; BSF, BSR
+ '((xor ax ax) (mov dx #x1) (bsr ax dx))
+ '((xor ax ax) (mov dx #x10) (bsr ax dx))
+ '((xor ax ax) (mov dx #xffff) (bsr ax dx))
+ '((xor ax ax) (mov dx 0) (bsr ax dx))
+ '((xor ax ax) (mov dx #x1) (bsf ax dx))
+ '((xor ax ax) (mov dx #x10) (bsf ax dx))
+ '((xor ax ax) (mov dx #xffff) (bsf ax dx))
+ '((xor ax ax) (mov dx 0) (bsf ax dx))
+
  ;; SHLD.
  '((mov ax #xabcd) (mov dx #x0123) (shld ax dx 4))
  '((mov ax #xabcd) (mov dx #x0123) (mov cl 5) (shld ax dx cl))
