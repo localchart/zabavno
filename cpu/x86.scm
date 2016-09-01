@@ -1619,6 +1619,12 @@
               ;; Two-byte opcodes.
               (with-instruction-u8* ((op1 <- cs ip))
                 (case op1
+                  ;; TODO: #x00 GROUP-6
+                  ;; TODO: #x01 GROUP-7
+                  ;; TODO: #x02 lar
+                  ;; TODO: #x03 lsl
+                  ;; TODO: #x06 clts
+                  ;; TODO: #x20-#x24, #x26 mov for CR*, DR*
                   ((#x80 #x81 #x82 #x83 #x84 #x85 #x86 #x87 #x88 #x89 #x8A #x8B #x8C #x8D #x8E #x8F)
                    ;; Jcc Jz
                    (with-instruction-immediate-sx* ((disp <- cs ip eos))
@@ -1803,13 +1809,11 @@
                       ,(continue #t ip))))))
              ((#x30 #x31 #x32 #x33 #x34 #x35)
               (emit (cg-arithmetic-group op 'XOR ip cs dseg sseg eos eas continue)))
-             #;((#x37)
-                ;; aaa
-                )
+             ;; 37 aaa is grouped with aas below.
              ((#x38 #x39 #x3A #x3B #x3C #x3D)
               (emit (cg-arithmetic-group op 'CMP ip cs dseg sseg eos eas continue)))
-             #;((#x3F)
-                ;; aas
+             #;((#x37 #x3F)
+                ;; TODO: aaa aas
                 )
              ((#x40 #x41 #x42 #x43 #x44 #x45 #x46 #x47 #x48 #x49 #x4A #x4B #x4C #x4D #x4E #x4F)
               ;; inc/dec *rAX/r8 ... *rDI/r15
@@ -1847,6 +1851,8 @@
                                 ,@(cgl-register-update idx-SI eos 'SI^)
                                 ,@(cgl-register-update idx-DI eos 'DI^))
                            ,(continue merge ip)))))
+             ;; TODO: 62 bound Gv, Ma
+             ;; TODO: 63 arpl Ew Rw
              ((#x68)                    ; push Iz
               (with-instruction-immediate* ((imm <- cs ip eos))
                 (emit (cg-push eos imm (continue merge ip)))))
@@ -1869,6 +1875,7 @@
                                              (cg-r/m-ref store location eos) imm)
                            ,@(cgl-reg-set modr/m eos 'result))
                       ,(continue #t ip))))))
+             ;; TODO: ins Yb *DX, ins Yz *DX
              ((#x6E #x6F)               ; outs *DX Xb, outs *DX Xz
               (let ((eos (if (eqv? op #x6E) 8 eos)))
                 (cond ((eqv? repeat 'z)
@@ -2007,6 +2014,11 @@
                            `(let ((cs ,(fxasl seg 4))
                                   (ip ,off))
                               ,(return merge 'ip))))))
+             ((#x9B)                    ; wait/fwait
+              ;; TODO: #NM if MP and TS are both set in CR0
+              (emit `(if #f
+                         ,(cg-int-device-not-available return merge start-ip)
+                         ,(continue merge ip))))
              ((#x9C)                    ; pushfw / pushfd
               (emit `(let* (,@(cgl-merge-fl/eval merge)
                             (tmp ,(cgand '(fl) (bitwise-not (bitwise-ior flag-RF flag-VM)))))
@@ -2252,6 +2264,9 @@
                                                imm)
                              ,@(cgl-r/m-set store location eos 'result))
                         ,(continue #t ip)))))))
+             ;; TODO: D4 AAM
+             ;; TODO: D5 AAD
+             ;; TODO: D6 SALC (check if it's in the 80386)
              ((#xD7)                    ; xlatb
               (emit
                `(let* ((addr ,(cg+ dseg (cg+ (cg-register-ref idx-BX eas)
@@ -2335,7 +2350,7 @@
                   (emit (return merge start-ip))
                   (emit (return merge #f))))
              ((#xF4)                    ; hlt
-              ;; Halt and wait for an interrupt.
+              ;; TODO: Halt and wait for an interrupt.
               (if (not first?)
                   (emit (return merge start-ip))
                   (emit (return merge ip))))
