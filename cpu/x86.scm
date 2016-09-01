@@ -779,7 +779,7 @@
     ;; Takes an unsigned integer and recovers the sign, in case it's
     ;; larger than the largest signed integer.
     `(let ((x ,expr))
-       (if (> x ,(- (expt 2 (- eos 1)) 1))
+       (if (>= x ,(expt 2 (- eos 1)))
            ,(cg- 'x (expt 2 eos))
            x)))
 
@@ -1743,6 +1743,13 @@
                                                   (cg-r/m-ref store location eos))
                                 ,@(cgl-reg-set modr/m eos 'result))
                            ,(continue #t ip))))))
+                  ((#xBE #xBF)          ; movsx Gv Eb, movsx Gv Ew
+                   (let ((os (if (eqv? op1 #xBE) 8 16)))
+                     (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                       (emit
+                        `(let* ((value ,(cg-recover-sign (cg-r/m-ref store location os) os))
+                                ,@(cgl-reg-set modr/m eos 'value))
+                           ,(continue merge ip))))))
                   (else
                    (if (not first?)
                        (emit (return merge start-ip))

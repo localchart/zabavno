@@ -256,6 +256,11 @@
 ;; for the emulator to save which flags are currently undefined.
 
 (run-tests
+ ;; MOVSX
+ '((mov ax #x7f) (movsx ax al))
+ '((mov ax #x80) (movsx bx al))
+ '((mov ax #x80) (movsx bx ax))
+
  ;; BT, BTC, BTR, BTS
  '((stc) (mov ax #x1248) (mov dx 4) (bt ax dx))
  '((stc) (mov ax #x1248) (mov dx 15) (bt ax dx))
