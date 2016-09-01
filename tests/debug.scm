@@ -256,6 +256,10 @@
 ;; for the emulator to save which flags are currently undefined.
 
 (run-tests
+ ;; SHLD.
+ '((mov ax #xabcd) (mov dx #x0123) (shld ax dx 4))
+ '((mov ax #xabcd) (mov dx #x0123) (mov cl 5) (shld ax dx cl))
+
  ;; SHRD.
  '((mov ax #xabcd) (mov dx #x0123) (shrd ax dx 4))
  '((mov ax #xabcd) (mov dx #x0123) (mov cl 5) (shrd ax dx cl))

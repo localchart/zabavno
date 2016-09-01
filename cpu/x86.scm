@@ -377,7 +377,7 @@
         ((_ . x*)
          #'(print . x*))
         ((_ . x*)
-         #'(values)))))
+         #f))))
 
   ;; Instead of using a big bytevector for the RAM, it is split into
   ;; pages that are referenced from a vector.
@@ -705,6 +705,11 @@
         `(fx- ,op0 ,op1)
         `(- ,op0 ,op1)))
 
+  (define (cgmax op0 op1)
+    (if (> (fixnum-width) 32)
+        `(fxmax ,op0 ,op1)
+        `(max ,op0 ,op1)))
+
   (define (cg-reg-ref modr/m eos)
     (cg-register-ref (ModR/M-reg modr/m) eos))
 
@@ -795,6 +800,24 @@
   (define (cg-PF result)
     ;; TODO: LUT.
     `(if (fxeven? (fxbit-count (fxand ,result #xff))) ,flag-PF 0))
+
+  (define (cgl-arithmetic-shld result eos input0 input1 count)
+    `((t0 ,input0)
+      (t1 ,input1)
+      (count ,(cgand count #b00011111))
+      (tmp ,(cgior (cgasl (cgand 't0 (cg- (cgasl 1 (cgmax 0 (cg- eos 'count))) 1))
+                          'count)
+                   (cgasr 't1 (cgmax 0 (cg- eos 'count)))))
+      (,result ,(cg-trunc 'tmp eos))
+      (fl-OF (lambda () (fl-OF)))       ;undefined
+      (fl-SF (lambda () (if (eqv? count 0) (fl-SF) ,(cg-SF result eos))))
+      (fl-ZF (lambda () (if (eqv? count 0) (fl-ZF) ,(cg-ZF result))))
+      (fl-AF (lambda () (fl-AF)))       ;undefined
+      (fl-PF (lambda () (if (eqv? count 0) (fl-PF) ,(cg-PF result))))
+      (fl-CF (lambda () (if (eqv? count 0) (fl-CF)
+                            (if ,(cgbit-set? 't0 (cg- eos 'count))
+                                ,flag-CF
+                                0))))))
 
   (define (cgl-arithmetic result result:u eos operator t0 t1)
     ;; TODO: Check the corner cases.
@@ -1538,6 +1561,25 @@
                    (emit (cg-push 16 '(fxarithmetic-shift-right fs 4) (continue merge ip))))
                   ((#xA1)               ; pop *FS
                    (emit (cg-pop 16 'tmp `(let ((fs ,(cgasl 'tmp 4))) ,(continue merge ip)))))
+                  ((#xA4)               ; shld Ev Gv Ib
+                   (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                     (with-instruction-u8* ((imm <- cs ip))
+                       (emit
+                        `(let* (,@(cgl-arithmetic-shld 'result eos
+                                                       (cg-r/m-ref store location eos)
+                                                       (cg-reg-ref modr/m eos)
+                                                       imm)
+                                ,@(cgl-r/m-set store location eos 'result))
+                           ,(continue #t ip))))))
+                  ((#xA5)               ; shld Ev Gv *CL
+                   (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                     (emit
+                      `(let* (,@(cgl-arithmetic-shld 'result eos
+                                                     (cg-r/m-ref store location eos)
+                                                     (cg-reg-ref modr/m eos)
+                                                     (cg-register-ref idx-CX 8))
+                              ,@(cgl-r/m-set store location eos 'result))
+                         ,(continue #t ip)))))
                   ((#xA8)               ; push *GS
                    (emit (cg-push 16 '(fxarithmetic-shift-right gs 4) (continue merge ip))))
                   ((#xA9)               ; pop *GS
