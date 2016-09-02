@@ -85,7 +85,7 @@
              (off int))
         (memory-u16-set! addr off)
         (memory-u16-set! (+ addr 2) seg)
-        (memory-u8-set! (real-pointer seg off) #xF1))) ;ICEBP
+        (memory-u8-set! (real-pointer seg off) #xF4))) ;HLT
     ;; BIOS data area (BDA)
     (let ((equipment (fxior (fxarithmetic-shift-left 1 0) ;floppy disk
                             (fxarithmetic-shift-left 0 1) ;no 387
@@ -114,15 +114,26 @@
   ;; the machine is at a BIOS interrupt vector. It's a bit hacky doing
   ;; it this way, but it's easier to get started.
   (define (pcbios-post-emulator-exit bios-data M)
-    (cond ((and (eqv? (machine-CS M) #xF000)
-                (<= (machine-IP M) #xFF))
-           ;; An interrupt vector. Fake BIOS calls.
-           (cond ((eqv? (pcbios-interrupt bios-data M (machine-IP M)) 'exit-dos)
-                  'exit-emulator)
-                 (else
-                  (machine-IP-set! M #x100) ;Points at IRET
-                  'continue-emulator)))
-          (else 'exit-emulator)))
+    (let ((IF-clear (eqv? (fxand (machine-FLAGS M) flag-IF) 0)))
+      (cond ((and IF-clear
+                  (eqv? (machine-CS M) #xF000)
+                  (<= (machine-IP M) #xFF))
+             ;; A real-mode interrupt vector. Fake BIOS calls.
+             (let ((command (pcbios-interrupt bios-data M (machine-IP M))))
+               (cond ((memq command '(exit-emulator reboot))
+                      command)
+                     (else
+                      (machine-IP-set! M #x100) ;Points at IRET
+                      'continue-emulator))))
+            ((not IF-clear)
+             ;; This is just a normal HLT with IF set, the emulated
+             ;; system is waiting for a hardware IRQ.
+             'continue-emulator)
+            (else
+             ;; IF is zero. Normally only an NMI would get the system
+             ;; out of this state, so basically it has locked up.
+             (print "pcbios: The HLT instruction was executed with IF clear, exiting.")
+             'exit-emulator))))
 
   (define (port-file-size port)
     ;; XXX: This is the only portable way to do this in R6RS Scheme,
@@ -243,10 +254,10 @@
                   (hex saved-cs) ":" (hex saved-ip) ": "
                   (hex (memory-u8-ref (real-pointer saved-cs saved-ip))) " "
                   (hex (memory-u8-ref (real-pointer saved-cs (fx+ saved-ip 1))))))
-         'exit-dos)
+         'exit-emulator)
         ((#x07)
          (print "pcbios: No x87 emulation has been implemented/installed, exiting")
-         'exit-dos)
+         'exit-emulator)
         ((#x10)                         ;video emulation
          (case AH
            ((#x01)                      ;set text-mode cursor shape
@@ -559,7 +570,7 @@
             (not-implemented))))
         ((#x20)                         ;DOS
          ;; Terminate program. Used to exit the program.
-         'exit-dos)
+         'exit-emulator)
         ((#x21)                         ;DOS
          (case AH
            ((#x02)                      ; write character to standard output

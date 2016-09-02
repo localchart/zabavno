@@ -45,7 +45,7 @@
                     (else
                      (load-dos-com-image p program-args)))
               (let lp ()
-                (machine-run)                 ;run until ICEBP
+                (machine-run)                 ;run until HLT
                 (when (eq? (pcbios-post-emulator-exit bios-data M) 'continue-emulator)
                   (lp))))))))))
 

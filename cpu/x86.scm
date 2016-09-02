@@ -2383,17 +2383,13 @@
                          (I/O port ,eos value)
                          ,(continue merge ip)))))
              ((#xF1)                    ; icebp / int1
-              ;; In-Circuit Emulator BreakPoint. Exit. Normally
-              ;; this would be equivalent to INT 1, except it doesn't
-              ;; count as a software interrupt.
+              (emit (cg-int-software-interrupt 1 return merge ip)))
+             ((#xF4)                    ; hlt
+              ;; Halt and wait for an interrupt. This is also what
+              ;; triggers the BIOS library if IF=0.
               (if (not first?)
                   (emit (return merge start-ip))
                   (emit (return merge #f))))
-             ((#xF4)                    ; hlt
-              ;; TODO: Halt and wait for an interrupt.
-              (if (not first?)
-                  (emit (return merge start-ip))
-                  (emit (return merge ip))))
              ((#xF5)                    ; cmc
               (emit
                `(let* ((fl-CF (lambda () (fxxor (fl-CF) ,flag-CF))))
