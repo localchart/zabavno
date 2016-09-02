@@ -155,15 +155,14 @@
                 (assemble `((%mode 16)
                             ,@program
                             ;; Stop the emulator.
-                            (icebp)))))
+                            (hlt)))))
     (with-machine m
       (lambda ()
         (machine-debug-set! m #t)
         (machine-trace-set! m #t)
         ;; Copy in the code.
         (machine-IP-set! m #x100)
-        (let ((addr (+ (* (machine-CS m) 16)
-                       (machine-IP m))))
+        (let ((addr (real-pointer (machine-CS m) (machine-IP m))))
           (copy-to-memory addr code))
         (machine-run)
         m))))
