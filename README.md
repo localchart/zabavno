@@ -17,7 +17,7 @@ interesting.
 
 The emulator can load simple DOS programs and start FreeDOS and MS-DOS
 from boot floppies. This is done by emulating just the CPU and with a
-pseudo BIOS written in Scheme. Programs run in real-time but not
+pseudo BIOS written in Scheme. Programs run responsively but not
 blazingly fast, it's more like on a genuine 80386.
 
 Protected mode is not a priority right now but should eventually be

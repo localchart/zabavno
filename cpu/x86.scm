@@ -848,6 +848,34 @@
       ((CMP) (cgl-arithmetic result result:u eos 'SUB t0 t1))
       ((TEST) (cgl-arithmetic result result:u eos 'AND t0 t1))
 
+      ((AAD)
+       `((t0 ,t0)
+         (t1 ,t1)
+         (tmp (fxand #xff (fx+ (fxand t0 #xff)
+                               (fx* t1 (fxbit-field t0 8 16)))))
+         (,result tmp)
+         (fl-OF (lambda () 0))          ;undefined
+         (fl-SF (lambda () ,(cg-SF result eos)))
+         (fl-ZF (lambda () ,(cg-ZF result)))
+         (fl-AF (lambda () 0))          ;undefined
+         (fl-PF (lambda () ,(cg-PF result)))
+         (fl-CF (lambda () 0))))        ;undefined
+
+      ((AAM)
+       `((t0 ,t0)
+         (t1 ,t1)
+         (ah (fxdiv t0 t1))
+         (al (fxmod t0 t1))
+         (tmp (fxior (fxarithmetic-shift-left ah 8) al))
+         (,result tmp)
+         ;; Flags reflect AL only, according to Intel documentation.
+         (fl-OF (lambda () 0))          ;undefined
+         (fl-SF (lambda () ,(cg-SF 'al 8)))
+         (fl-ZF (lambda () ,(cg-ZF 'al)))
+         (fl-AF (lambda () 0))          ;undefined
+         (fl-PF (lambda () ,(cg-PF 'al)))
+         (fl-CF (lambda () 0))));undefined
+
       ((ADD)
        `((t0 ,t0)
          (t1 ,t1)
@@ -2264,9 +2292,21 @@
                                                imm)
                              ,@(cgl-r/m-set store location eos 'result))
                         ,(continue #t ip)))))))
-             ;; TODO: D4 AAM
-             ;; TODO: D5 AAD
-             ;; TODO: D6 SALC (check if it's in the 80386)
+             ((#xD4 #xD5)               ; aam, aad
+              (with-instruction-u8* ((imm <- cs ip))
+                (let ((operator (if (eqv? op #xD4) 'AAM 'AAD))
+                      (eos (if (eqv? op #xD4) 8 16)))
+                  (emit `(let* (,@(cgl-arithmetic 'result #f 16 operator
+                                                  (cg-register-ref idx-AX eos)
+                                                  imm)
+                                ,@(cgl-register-update idx-AX 16 'result))
+                           ,(continue #t ip))))))
+             ((#xD6)                    ; salc
+              (emit
+               `(let (,@(cgl-register-update idx-AX 8
+                                             `(if (not (eqv? (fl-CF) 0))
+                                                  #xff #x00)))
+                  ,(continue merge ip))))
              ((#xD7)                    ; xlatb
               (emit
                `(let* ((addr ,(cg+ dseg (cg+ (cg-register-ref idx-BX eas)

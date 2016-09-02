@@ -256,6 +256,19 @@
 ;; for the emulator to save which flags are currently undefined.
 
 (run-tests
+ ;; AAD
+ '((mov ax #x0409) (%u8 #xD5 10))
+
+ ;; AAM
+ '((mov ax #x3902) (%u8 #xD4 10))
+ '((mov ax 1) (%u8 #xD4 10))
+ '((mov ax 68) (%u8 #xD4 10))
+ '((mov al 7) (mov cl 6) (mul cl) (%u8 #xD4 10))
+
+ ;; SALC
+ '((xor ax ax) (stc) (salc))
+ '((xor ax ax) (clc) (salc))
+
  ;; MOVSX
  '((mov ax #x7f) (movsx ax al))
  '((mov ax #x80) (movsx bx al))
