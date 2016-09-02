@@ -44,7 +44,7 @@
           make-machine
           machine-debug machine-debug-set!
           machine-trace machine-trace-set!
-          machine-RAM machine-RAM-set!
+          machine-RAM
           machine-memory-size
           machine-AX machine-AX-set!
           machine-CX machine-CX-set!
@@ -67,6 +67,9 @@
           memory-u8-set! memory-u16-set! memory-u32-set!
           machine-hook-4k-page!
           machine-hook-i/o-port!
+          machine-hook-interrupt!
+          enable-interrupt-hooks
+          call-interrupt-handler
 
           with-machine
           current-machine
@@ -120,8 +123,8 @@
     (fields (mutable debug)
             (mutable trace)
             ;; Memory and I/O
-            (mutable RAM)
-            (mutable I/O)
+            (immutable RAM)
+            (immutable I/O)
             ;; GP registers
             (mutable AX)
             (mutable CX)
@@ -141,6 +144,7 @@
             ;; Other stuff
             (mutable IP)
             (mutable FLAGS)
+            (immutable int-handlers)
             (immutable translations))
     (protocol
      (lambda (p)
@@ -155,6 +159,7 @@
             0 0 0 0 0 0
             ;; Other stuff
             0 (fxior flags-always-set flag-IF)
+            (make-fallback-int-handlers)
             (make-eqv-hashtable))))))
 
   (define *current-machine*)
@@ -572,6 +577,78 @@
                       " and size " size " replaces " previous
                       " with " procedure))))
       (hashtable-set! table port procedure)))
+
+;;; Interrupt vectors
+
+  ;; This defines default procedures for handling interrupts. The
+  ;; IVT/IDT in the machine is primarily responsible for keeping track
+  ;; of interrupt vectors. This is for things like Scheme-coded BIOS,
+  ;; Video BIOS, DOS emulation, etc.
+
+  (define (make-fallback-int-handlers)
+    (define (fallback-handler M vec)
+      (case vec
+        ((#x06)
+         (let ((saved-ip (memory-u16-ref (real-pointer (machine-SS M) (machine-SP M))))
+               (saved-cs (memory-u16-ref (real-pointer (machine-SS M) (+ (machine-SP M) 2)))))
+           (print "Error: invalid opcode at "
+                  (hex saved-cs) ":" (hex saved-ip)
+                  ": "  (hex (memory-u8-ref (real-pointer saved-cs saved-ip)))
+                  " " (hex (memory-u8-ref (real-pointer saved-cs (fx+ saved-ip 1))))
+                  " ...: " (disassemble (copy-inst saved-cs saved-ip)))
+           'stop))
+        ((#x07)
+         ;; About "installed": there are x87 emulators for DOS.
+         (print "Error: no x87 emulation has been implemented/installed")
+         'stop)
+        (else
+         (print "Warning: unhandled INT #x" (hex vec) " AX=#x" (hex (machine-AX M)))
+         'resume)))
+    (make-vector 256 fallback-handler))
+
+  ;; Hooks a real-mode interrupt vector. The procedure will be called
+  ;; as (procedure M int-vector chain). If the procedure decides to
+  ;; chain the interrupt (e.g. because it could not handle it) then
+  ;; the chain procedure should be called as (chain M int-vector). If
+  ;; the procedure wants the emulator to stop running the machine it
+  ;; should return the symbol 'stop. The machine state may be changed
+  ;; in any way that implements the interrupt. The return value from
+  ;; this procedure is a procedure that may be called without
+  ;; arguments to unhook the interrupt handler.
+  (define (machine-hook-interrupt! M int-vector handler)
+    (assert (fx<=? 0 int-vector 255))
+    (assert (procedure? handler))
+    (let* ((handlers (machine-int-handlers M))
+           (old-handler (vector-ref handlers int-vector))
+           (unhook (lambda () (vector-set! handler int-vector old-handler))))
+      (vector-set! handlers int-vector
+                   (lambda (M int-vector)
+                     (handler M int-vector old-handler)))
+      unhook))
+
+  ;; Calls an interrupt handler registered with
+  ;; machine-hook-interrupt!. Can be used from an interrupt handler.
+  (define (call-interrupt-handler int-vector)
+    (let* ((M (current-machine))
+           (handler (vector-ref (machine-int-handlers M) int-vector)))
+      (handler M int-vector)))
+
+  ;; This enables the real-mode interrupt hooks in a very specific
+  ;; way: it writes 256 to the IVT at 0:0 to point to interrupt
+  ;; handlers, which consist of 256 HLT instructions at BIOS segment
+  ;; F000:0 followed by a single IRET. The HLTs are called with IF=0,
+  ;; which is usually bad idea, but is handled specially by
+  ;; machine-run.
+  (define (enable-interrupt-hooks)
+    (do ((seg #xF000)
+         (int 0 (fx+ int 1)))
+        ((fx=? int 256)
+         (memory-u8-set! (real-pointer seg int) #xCF)) ;IRET
+      (let* ((addr (fxarithmetic-shift-left int 2))
+             (off int))
+        (memory-u16-set! addr off)
+        (memory-u16-set! (fx+ addr 2) seg)
+        (memory-u8-set! (real-pointer seg off) #xF4)))) ;HLT
 
 ;;; For reading instructions
 
@@ -1593,12 +1670,12 @@
   (define (cg-int-overflow return merge ip)
     (%cg-int 4 #f return merge ip))     ;#OF
 
-  (define (cg-int-invalid-opcode return merge start-ip)
+  (define (cg-int-invalid-opcode return merge cs start-ip)
     (when (machine-debug (current-machine))
-      (let ((cs (machine-CS (current-machine))))
-        (print "Warning: invalid opcode at " (hex cs) ":" (hex start-ip)
-               ": " (number->string (memory-u8-ref (+ cs start-ip)) 16)
-               " " (number->string (memory-u8-ref (+ cs start-ip 1)) 16))))
+      (print "Warning: translating invalid opcode at " (hex cs) ":" (hex start-ip)
+             ": " (number->string (memory-u8-ref (real-pointer cs start-ip)) 16)
+             " " (number->string (memory-u8-ref (real-pointer cs (+ start-ip 1))) 16)
+             " ...: " (disassemble (copy-inst cs start-ip))))
     (%cg-int 6 #f return merge start-ip)) ;#UD
 
   (define (cg-int-device-not-available return merge start-ip)
@@ -1799,7 +1876,7 @@
                                        ((#xB4) 'fs)
                                        ((#xB5) 'gs))))
                            (emit (cg-load-far-pointer sreg location modr/m eos continue merge ip)))
-                         (emit (cg-int-invalid-opcode return merge start-ip)))))
+                         (emit (cg-int-invalid-opcode return merge cs start-ip)))))
                   ((#xB6 #xB7)          ; movzx Gv Eb, movzx Gv Ew
                    (let ((os (if (eqv? op1 #xB6) 8 16)))
                      (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
@@ -1817,7 +1894,7 @@
                                                         imm)
                                       ,@(cgl-r/m-set store location eos 'result))
                                  ,(continue #t ip)))
-                             (emit (cg-int-invalid-opcode return merge start-ip)))))))
+                             (emit (cg-int-invalid-opcode return merge cs start-ip)))))))
                   ((#xA3 #xAB #xB3 #xBB) ; bt Ev Gv, bts Ev Gv, btr Ev Gv, btc Ev Gv
                    (let ((operator
                           (case op1
@@ -1851,7 +1928,7 @@
                   (else
                    (if (not first?)
                        (emit (return merge start-ip))
-                       (emit (cg-int-invalid-opcode return merge start-ip)))))))
+                       (emit (cg-int-invalid-opcode return merge cs start-ip)))))))
 
              ((#x10 #x11 #x12 #x13 #x14 #x15)
               (emit (cg-arithmetic-group op 'ADC ip cs dseg sseg eos eas continue)))
@@ -2045,14 +2122,14 @@
                    (if src
                        `(let* (,@(cgl-r/m-set store location eos (cgasr src 4)))
                           ,(continue merge ip))
-                       (cg-int-invalid-opcode return merge start-ip))))))
+                       (cg-int-invalid-opcode return merge cs start-ip))))))
              ((#x8D)                    ; lea Gv M
               (with-r/m-operand ((ip store location modr/m) (cs ip 0 0 eas))
                 (emit
                  (if (eq? store 'mem)
                      `(let* (,@(cgl-reg-set modr/m eos location))
                         ,(continue merge ip))
-                     (cg-int-invalid-opcode return merge start-ip)))))
+                     (cg-int-invalid-opcode return merge cs start-ip)))))
              ((#x8E)                    ; mov Sw Ew
               (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                 (let ((reg (vector-ref '#(es #f ss ds fs gs #f #f) (ModR/M-reg modr/m))))
@@ -2060,14 +2137,14 @@
                    (if reg
                        `(let* ((,reg ,(cgasl (cg-r/m-ref store location 16) 4)))
                           ,(continue merge ip))
-                       (cg-int-invalid-opcode return merge start-ip))))))
+                       (cg-int-invalid-opcode return merge cs start-ip))))))
              ((#x8F)                    ; Group 1A - pop Ev
               (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                 (emit (if (eqv? (ModR/M-reg modr/m) 0)
                           (cg-pop eos 'tmp
                                   `(let* (,@(cgl-r/m-set store location eos 'tmp))
                                      ,(continue merge ip)))
-                          (cg-int-invalid-opcode return merge start-ip)))))
+                          (cg-int-invalid-opcode return merge cs start-ip)))))
              ((#x90)                    ; nop
               (emit (continue merge ip)))
              ((#;#x90 #x91 #x92 #x93 #x94 #x95 #x96 #x97)
@@ -2267,7 +2344,7 @@
                 (if (eq? store 'mem)
                     (let ((sreg (if (eqv? op #xC4) 'es 'ds)))
                       (emit (cg-load-far-pointer sreg location modr/m eos continue merge ip)))
-                    (emit (cg-int-invalid-opcode return merge start-ip)))))
+                    (emit (cg-int-invalid-opcode return merge cs start-ip)))))
              ((#xC6 #xC7)               ; Group 11
               (let ((eos (if (eqv? op #xC6) 8 eos)))
                 (with-r/m-operand ((ip store location modr/m)
@@ -2279,7 +2356,7 @@
                         `(let* (,@(cgl-r/m-set store location eos imm))
                            ,(continue merge ip))))
                       (else
-                       (emit (cg-int-invalid-opcode return merge start-ip))))))))
+                       (emit (cg-int-invalid-opcode return merge cs start-ip))))))))
              ((#xC8)                    ; enter Iw Ib
               ;; The mother pearl of CISC instructions.
               (with-instruction-immediate* ((storage <- cs ip 16)
@@ -2547,7 +2624,7 @@
                                 ,@(cgl-r/m-set store location eos 'result))
                            ,(continue #t ip)))))
                     ((not (eqv? op #xFF))
-                     (emit (cg-int-invalid-opcode return merge start-ip)))
+                     (emit (cg-int-invalid-opcode return merge cs start-ip)))
                     (else
                      (case operator
                        ((CALL)          ; call Ev
@@ -2564,7 +2641,7 @@
                                                (seg (RAM ,(cg+ 'addr (/ eos 8)) 16))
                                                (cs ,(cgasl 'seg 4)))
                                           ,(return merge 'off)))
-                             (cg-int-invalid-opcode return merge start-ip))))
+                             (cg-int-invalid-opcode return merge cs start-ip))))
                        ((JMP)           ; jmp Ev
                         (emit
                          `(let* ((ip ,(cg-r/m-ref store location eos)))
@@ -2576,16 +2653,16 @@
                                           (seg (RAM ,(cg+ 'addr (/ eos 8)) 16))
                                           (cs ,(cgasl 'seg 4)))
                                      ,(return merge 'off))
-                                  (cg-int-invalid-opcode return merge start-ip))))
+                                  (cg-int-invalid-opcode return merge cs start-ip))))
                        ((PUSH)          ; push Ev
                         (emit (cg-push eos (cg-r/m-ref store location eos)
                                        (continue merge ip))))
                        (else            ; #UD
-                        (emit (cg-int-invalid-opcode return merge start-ip)))))))))
+                        (emit (cg-int-invalid-opcode return merge cs start-ip)))))))))
              (else
               (if (not first?)
                   (emit (return merge start-ip))
-                  (emit (cg-int-invalid-opcode return merge start-ip))))))))))
+                  (emit (cg-int-invalid-opcode return merge cs start-ip))))))))))
 
 ;;; Translation cache
 
@@ -2642,8 +2719,6 @@
     (case-lambda
       ((command addr size value)
        ;; TODO: Inline this code.
-       ;; (assert (fixnum? value))
-       ;; (assert (fixnum? addr))
        (case command
          ((write-memory)
           (case size
@@ -2662,6 +2737,10 @@
          ((read-i/o)
           (port-read addr size))))))
 
+  ;; Run instructions until HLT. If the return value is 'stop then the
+  ;; machine has gotten stuck (HLT and IF=0) or an interrupt handler
+  ;; has instructed the machine to stop. If the reutrn value is
+  ;; 'reboot then the machine should be rebooted.
   (define (machine-run)
     (define M *current-machine*)
     (define debug (machine-debug M))
@@ -2684,8 +2763,7 @@
                (SP (machine-SP M))
                (BP (machine-BP M))
                (SI (machine-SI M))
-               (DI (machine-DI M))
-               (idt 0))
+               (DI (machine-DI M)))
       (when debug
         (print)
         (print "; AX=" (hex AX 4) "  BX=" (hex BX 4)
@@ -2716,9 +2794,8 @@
                              cs ds ss es fs gs)))
           (cond (ip^
                  (loop fl^ ip^ cs^ ds^ ss^ es^ fs^ gs^
-                       AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^
-                       idt))
-                (else
+                       AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^))
+                (else                   ;hlt was executed
                  (machine-AX-set! M AX^)
                  (machine-CX-set! M CX^)
                  (machine-DX-set! M DX^)
@@ -2734,4 +2811,21 @@
                  (machine-FS-set! M (segment-selector fs^))
                  (machine-GS-set! M (segment-selector gs^))
                  (machine-IP-set! M ip)
-                 (machine-FLAGS-set! M fl^))))))))
+                 (machine-FLAGS-set! M fl^)
+                 ;; Default real-mode interrupt handlers.
+                 (cond ((eqv? (fxand fl^ flag-IF) 0)
+                        ;; TODO: It would be better to not hardcode this.
+                        (cond ((and (eqv? cs^ #xF0000) (fx<=? ip #xFF))
+                               (let* ((int-vector ip)
+                                      (result (call-interrupt-handler int-vector)))
+                                 (when debug
+                                   (print "INT #x" (hex int-vector) " AX=#x" (hex AX^)))
+                                 (cond ((memq result '(stop reboot))
+                                        result)
+                                       (else
+                                        (machine-IP-set! M #x100)
+                                        (machine-run)))))
+                              (else
+                               (print "Warning: the HLT instruction was executed with IF clear, exiting.")
+                               'stop)))
+                       (else 'hlt)))))))))

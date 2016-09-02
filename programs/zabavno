@@ -24,6 +24,7 @@
 
 (import (rnrs (6))
         (zabavno cpu x86)
+        (zabavno firmware dos)
         (zabavno firmware pcbios)
         (zabavno loader pcboot)
         (zabavno loader dos))
@@ -36,18 +37,24 @@
         (machine-trace-set! M enable-trace)
         (call-with-port (open-file-input-port filename)
           (lambda (p)
+            (enable-interrupt-hooks)
             (let ((bios-data (pcbios-setup)))
               (cond ((detect-boot-sector p)
                      (load-boot-sector p)
                      (pcbios-load-floppy-image bios-data 0 p)) ;drive A
                     ((detect-dos-exe-image p)
+                     (dos-setup)
                      (load-dos-exe-image p program-args))
                     (else
+                     (dos-setup)
                      (load-dos-com-image p program-args)))
               (let lp ()
-                (machine-run)                 ;run until HLT
-                (when (eq? (pcbios-post-emulator-exit bios-data M) 'continue-emulator)
-                  (lp))))))))))
+                (case (machine-run)
+                  ((stop) #f)
+                  ((hlt) (lp))          ;wait for external interrupts
+                  ((reboot)
+                   (main filename program-args enable-debug enable-trace))
+                  (else (lp)))))))))))
 
 (define (help)
   (display "The zabavno machine emulator test program\n\
