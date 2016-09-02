@@ -24,16 +24,18 @@
 ;; Default fallbacks when no compatibility library has been loaded.
 
 (library (zabavno firmware compat)
-  (export input-port-ready?)
+  (export input-port-ready?
+          get-current-time
+          get-current-date)
   (import (rnrs (6)))
 
   (define input-port-ready?
     (let ((warned? #f))
-      (unless warned?
-        (display "No (zabavno firmware compat) library has been provided, the keyboard will not work\n"
-                 (current-error-port))
-        (set! warned? #t))
       (lambda (port)
+        (unless warned?
+          (display "No (zabavno firmware compat) library has been provided, the keyboard will not work\n"
+                   (current-error-port))
+          (set! warned? #t))
         #f)))
 
   (define (get-current-time)
