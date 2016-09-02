@@ -208,6 +208,15 @@
       (string-append "\x1b;[0;" blink bright (number->string fg)
                      ";" (number->string bg) "m")))
 
+  (define (bcd n)
+    (let lp ((ret 0) (n n) (s 0))
+      (if (eqv? n 0)
+          ret
+          (let-values (((n digit) (fxdiv-and-mod n 10)))
+            (lp (fxior ret (fxarithmetic-shift-left digit s))
+                n
+                (fx+ s 4))))))
+
   ;; Handle a BIOS interrupt.
   (define (pcbios-interrupt bios-data M vec)
     (define (not-implemented)
@@ -288,11 +297,17 @@
               (display (attribute->ansi-code attribute))
               (display (make-string count (string-ref cp437 char)))
               (display "\x1b;[0m")))
-           ((#x0E)
-            ;; Write a character. TODO: color.
+           ((#x0E)                      ;teletype output
             (put-char (current-output-port)
                       (string-ref cp437/control (fxand (machine-AX M) #xff)))
-            (clear-CF))
+            (flush-output-port (current-output-port))
+            (let* ((column (fxmod (fx+ (bios-cursor-column bios-data) 1) 80))
+                   (row (if (= column 0)
+                            (fxmin (fx+ (bios-cursor-row bios-data) 1) 24)
+                            (bios-cursor-row bios-data))))
+              (bios-cursor-column-set! bios-data column)
+              (bios-cursor-row-set! bios-data row)
+              (clear-CF)))
            ((#x0f)                      ;get current video mode
             (let ((columns 80)
                   (mode 3)
@@ -403,6 +418,7 @@
                                                        (fxnot #xFFFF))))
                 (clear-CF))))
            (else
+            (set-CF)
             (not-implemented))))
         ((#x14)
          (case AH
@@ -413,8 +429,7 @@
               (when (machine-debug M)
                 (print "pcbios: initialize serial port " port " with parameters " parameters))
               (machine-AX-set! M (bitwise-ior (bitwise-and (machine-AX M) (fxnot #xffff))
-                                              #x0000)) ; line/modem status
-              (clear-CF)))
+                                              #x0000)))) ; line/modem status
            (else
             (not-implemented))))
         ((#x15)
@@ -430,6 +445,7 @@
             (machine-AX-set! M (bitwise-and (machine-AX M) (fxnot #xff00)))
             (clear-CF))
            (else
+            (set-CF)
             (not-implemented))))
         ((#x16)                         ;KEYBOARD
          (letrec ((return-character
@@ -471,30 +487,21 @@
               (when (machine-debug M)
                 (print "pcbios: initialize parallel port " port))
               (machine-AX-set! M (bitwise-ior (bitwise-and (machine-AX M) (bitwise-not #xffff00ff))
-                                              #x00)))
-            (clear-CF))
+                                              #x00))))
            (else
             (not-implemented))))
         ((#x19)
          ;; Bootstrap loader. Used to reboot the machine.
-         (clear-CF)
          'reboot)
         ((#x1A)                         ;TIME
-         ;; TODO: Really get the time.
-         (let ((hour 19) (minutes 01) (seconds 23) (dst-flag #x01)
-               (century 20) (year 16) (month 8) (day 27))
-           (define (bcd n)
-             (let lp ((ret 0) (n n) (s 0))
-               (if (eqv? n 0)
-                   ret
-                   (lp (fx+ ret (fxarithmetic-shift-left (fxand n #xf) s))
-                       (fxarithmetic-shift-right n 4)
-                       (fx+ s 4)))))
-           (case AH
-             ((#x00)                    ;get system time
+         (case AH
+           ((#x00)                    ;get system time
+            (let-values (((hour minute second nanosecond dst?) (get-current-time)))
               (let* ((ticks-per-day #x1800B0) ; ~18.2 ticks/s
-                     (clock-ticks (round (* (+ (* hour 60 60) (* minutes 60) seconds)
-                                            (/ (* 24 60 60) ticks-per-day))))
+                     (clock-ticks
+                      (round (* (+ (* hour 60 60) (* minute 60) second
+                                   (/ nanosecond (expt 10 9)))
+                                (/ ticks-per-day (* 24 60 60)))))
                      (midnight-counter #x00))
                 (machine-CX-set! M (bitwise-ior (bitwise-bit-field clock-ticks 16 32)
                                                 (bitwise-and (machine-CX M)
@@ -504,25 +511,52 @@
                                                              (fxnot #xFFFF))))
                 (machine-AX-set! M (bitwise-ior midnight-counter
                                                 (bitwise-and (machine-AX M)
-                                                             (fxnot #xFF))))))
-             ((#x02)                    ;get rtc time
-              (machine-CX-set! M (bitwise-ior (bcd (+ (* hour 100) minutes))
-                                              (bitwise-and (machine-CX M)
-                                                           (fxnot #xFFFF))))
-              (machine-DX-set! M (bitwise-ior (bcd (+ (* seconds 100) dst-flag))
-                                              (bitwise-and (machine-DX M)
-                                                           (fxnot #xFFFF))))
-              (clear-CF))
-             ((#x04)                    ;get rtc date
-              (machine-CX-set! M (bitwise-ior (bcd (+ (* century 100) year))
-                                              (bitwise-and (machine-CX M)
-                                                           (fxnot #xFFFF))))
-              (machine-DX-set! M (bitwise-ior (bcd (+ (* month 100) day))
-                                              (bitwise-and (machine-DX M)
-                                                           (fxnot #xFFFF))))
-              (clear-CF))
-             (else
-              (not-implemented)))))
+                                                             (fxnot #xFF))))
+                (memory-u32-set! (real-pointer #x40 #x6C) clock-ticks)
+                (clear-CF))))
+           ((#x02)                    ;get rtc time
+            (let-values (((hour minute second _nanosecond dst?) (get-current-time)))
+              (machine-CX-set! M (bitwise-ior
+                                  (fxarithmetic-shift-left (bcd hour) 8)
+                                  (bcd minute)
+                                  (bitwise-and (machine-CX M)
+                                               (fxnot #xFFFF))))
+              (machine-DX-set! M (bitwise-ior
+                                  (fxarithmetic-shift-left (bcd second) 8)
+                                  (if dst? 1 0)
+                                  (bitwise-and (machine-DX M)
+                                               (fxnot #xFFFF))))
+              (clear-CF)))
+           ((#x04)                    ;get rtc date
+            (let*-values (((year month day) (get-current-date))
+                          ((century year) (fxdiv-and-mod year 100)))
+              (machine-CX-set! M (bitwise-ior
+                                  (fxarithmetic-shift-left (bcd century) 8)
+                                  (bcd year)
+                                  (bitwise-and (machine-CX M)
+                                               (fxnot #xFFFF))))
+              (machine-DX-set! M (bitwise-ior
+                                  (fxarithmetic-shift-left (bcd month) 8)
+                                  (bcd day)
+                                  (bitwise-and (machine-DX M)
+                                               (fxnot #xFFFF))))
+              (clear-CF)))
+           ((#x09)                    ;read rtc alarm time and status
+            (let* ((hours 0) (minutes 0) (seconds 0) (status 0))
+              (machine-CX-set! M (bitwise-ior
+                                  (fxarithmetic-shift-left (bcd hours) 8)
+                                  (bcd minutes)
+                                  (bitwise-and (machine-CX M)
+                                               (fxnot #xFFFF))))
+              (machine-DX-set! M (bitwise-ior
+                                  (fxarithmetic-shift-left (bcd seconds) 8)
+                                  status
+                                  (bitwise-and (machine-DX M)
+                                               (fxnot #xFFFF))))
+              (clear-CF)))
+           (else
+            (set-CF)
+            (not-implemented))))
         ((#x20)                         ;DOS
          ;; Terminate program. Used to exit the program.
          'exit-dos)
