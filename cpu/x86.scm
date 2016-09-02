@@ -91,6 +91,7 @@
 
   (define code-env (environment '(except (rnrs (6)) bitwise-rotate-bit-field)
                                 '(zabavno cpu compat)
+                                '(zabavno cpu x86-utils)
                                 '(only (rnrs r5rs (6)) quotient remainder)))
 
   ;; For debug printing.
@@ -936,8 +937,7 @@
     `(if (eqv? ,result 0) ,flag-ZF 0))
 
   (define (cg-PF result)
-    ;; TODO: LUT.
-    `(if (fxeven? (fxbit-count (fxand ,result #xff))) ,flag-PF 0))
+    `(if (vector-ref byte-parity-table (fxand ,result #xff)) ,flag-PF 0))
 
   (define (cgl-arithmetic-shld result eos input0 input1 count)
     `((t0 ,input0)
