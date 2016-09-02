@@ -46,10 +46,6 @@
           machine-trace machine-trace-set!
           machine-RAM machine-RAM-set!
           machine-memory-size
-          machine-read-hook machine-read-hook-set!
-          machine-write-hook machine-write-hook-set!
-          machine-in-hook machine-in-hook-set!
-          machine-out-hook machine-out-hook-set!
           machine-AX machine-AX-set!
           machine-CX machine-CX-set!
           machine-DX machine-DX-set!
@@ -69,6 +65,8 @@
           memory-u8-ref memory-u16-ref memory-u32-ref
           memory-s8-ref memory-s16-ref memory-s32-ref
           memory-u8-set! memory-u16-set! memory-u32-set!
+          machine-hook-4k-page!
+          machine-hook-i/o-port!
 
           with-machine
           current-machine
@@ -123,10 +121,7 @@
             (mutable trace)
             ;; Memory and I/O
             (mutable RAM)
-            (mutable read-hook)
-            (mutable write-hook)
-            (mutable in-hook)
-            (mutable out-hook)
+            (mutable I/O)
             ;; GP registers
             (mutable AX)
             (mutable CX)
@@ -153,10 +148,7 @@
          (p #f #f
             ;; Memory and I/O
             (make-empty-memory)
-            (lambda (address size) #f)
-            (lambda (address size value) #f)
-            (lambda (port size) (- (expt 2 size) 1))
-            (lambda (port size value) #f)
+            (make-empty-ports)
             ;; GP registers
             0 0 0 0 0 0 0 0
             ;; Segment registers
@@ -167,34 +159,22 @@
 
   (define *current-machine*)
   (define RAM)
-  (define *read-hook*)
-  (define *write-hook*)
 
   (define (with-machine M thunk)
     (let ((old-machine #f)
-          (old-RAM #f)
-          (old-read-hook #f)
-          (old-write-hook #f))
+          (old-RAM #f))
       (dynamic-wind
         (lambda ()
           (set! old-machine *current-machine*)
           (set! old-RAM RAM)
-          (set! old-read-hook *read-hook*)
-          (set! old-write-hook *write-hook*)
           (set! *current-machine* M)
-          (set! RAM (machine-RAM M))
-          (set! *read-hook* (machine-read-hook M))
-          (set! *write-hook* (machine-write-hook M)))
+          (set! RAM (machine-RAM M)))
         thunk
         (lambda ()
           (set! *current-machine* old-machine)
           (set! RAM old-RAM)
-          (set! *read-hook* old-read-hook)
-          (set! *write-hook* old-write-hook)
           (set! old-machine #f)
-          (set! old-RAM #f)
-          (set! old-read-hook #f)
-          (set! old-write-hook #f)))))
+          (set! old-RAM #f)))))
 
   (define (current-machine)
     *current-machine*)
@@ -423,21 +403,44 @@
   (define (RAM-page-offset addr)
     (fxand addr (fx- page-size 1)))
 
+  ;; All accesses to the page at the given address will be handled by
+  ;; the procedure. This allows emulating MMIO for hardware. The
+  ;; address must be aligned to a page boundary. For reads the
+  ;; procedure is called as (procedure address size), where size is 8,
+  ;; 16, 32 or 64. The procedure must return an integer in the range 0
+  ;; <= n < (expt 2 size). For writes the procedure is called with as
+  ;; (procedure address size value), where value a non-negative
+  ;; integer written to memory. Unaligned accesses are currently split
+  ;; into byte accesses.
+  (define (machine-hook-4k-page! M addr procedure)
+    (assert (eqv? (RAM-page-offset addr) 0))
+    (assert (procedure? procedure))
+    (let ((RAM (machine-RAM M))
+          (page (RAM-page addr)))
+      (cond ((vector-ref RAM page) =>
+             (lambda (previous)
+               (print "Warning: machine-hook-4k-page! at address #x" (hex addr)
+                      " replaces " (if (bytevector? previous) "RAM" previous)
+                      " with " procedure))))
+      (vector-set! RAM page procedure)))
+
   (define (memory-u8-ref addr)
-    (let ((x (cond ((*read-hook* addr 'u8))
-                   ((vector-ref RAM (RAM-page addr)) =>
+    (let ((x (cond ((vector-ref RAM (RAM-page addr)) =>
                     (lambda (page)
-                      (bytevector-u8-ref page (RAM-page-offset addr))))
+                      (if (bytevector? page)
+                          (bytevector-u8-ref page (RAM-page-offset addr))
+                          (page addr 8))))
                    (else DEFAULT-MEMORY-FILL))))
       (mtrace "memory-u8-ref: " (hex addr) " => " (hex x))
       x))
 
   (define (memory-u16-ref addr)
-    (let ((x (cond ((*read-hook* addr 'u16))
-                   ((fxzero? (fxand addr #b1))
+    (let ((x (cond ((fxzero? (fxand addr #b1))
                     (cond ((vector-ref RAM (RAM-page addr)) =>
                            (lambda (page)
-                             (bytevector-u16le-ref page (RAM-page-offset addr))))
+                             (if (bytevector? page)
+                                 (bytevector-u16le-ref page (RAM-page-offset addr))
+                                 (page addr 16))))
                           (else (* DEFAULT-MEMORY-FILL #x0101))))
                    (else
                     (fxior (memory-u8-ref addr)
@@ -446,11 +449,12 @@
       x))
 
   (define (memory-u32-ref addr)
-    (let ((x (cond ((*read-hook* addr 'u32))
-                   ((fxzero? (fxand addr #b11))
+    (let ((x (cond ((fxzero? (fxand addr #b11))
                     (cond ((vector-ref RAM (RAM-page addr)) =>
                            (lambda (page)
-                             (bytevector-u32le-ref page (RAM-page-offset addr))))
+                             (if (bytevector? page)
+                                 (bytevector-u32le-ref page (RAM-page-offset addr))
+                                 (page addr 32))))
                           (else (* DEFAULT-MEMORY-FILL #x01010101))))
                    (else
                     (fwior (memory-u8-ref addr)
@@ -471,11 +475,12 @@
 
   (define (memory-u8-set! addr value)
     (mtrace "memory-u8-set!: " (hex addr) " " (hex value))
-    (cond ((*write-hook* addr value 'u8))
-          ((vector-ref RAM (RAM-page addr)) =>
+    (cond ((vector-ref RAM (RAM-page addr)) =>
            (lambda (page)
              (invalidate-translation addr)
-             (bytevector-u8-set! page (RAM-page-offset addr) value)))
+             (if (bytevector? page)
+                 (bytevector-u8-set! page (RAM-page-offset addr) value)
+                 (page addr 8 value))))
           (else
            (let ((page (make-bytevector page-size DEFAULT-MEMORY-FILL)))
              (vector-set! RAM (RAM-page addr) page)
@@ -484,12 +489,13 @@
 
   (define (memory-u16-set! addr value)
     (mtrace "memory-u16-set!: " (hex addr) " " (hex value))
-    (cond ((*write-hook* addr value 'u16))
-          ((fxzero? (fxand addr #b1))
+    (cond ((fxzero? (fxand addr #b1))
            (cond ((vector-ref RAM (RAM-page addr)) =>
                   (lambda (page)
                     (invalidate-translation addr)
-                    (bytevector-u16le-set! page (RAM-page-offset addr) value)))
+                    (if (bytevector? page)
+                        (bytevector-u16le-set! page (RAM-page-offset addr) value)
+                        (page addr 16 value))))
                  (else
                   (let ((page (make-bytevector page-size DEFAULT-MEMORY-FILL)))
                     (vector-set! RAM (RAM-page addr) page)
@@ -501,12 +507,13 @@
 
   (define (memory-u32-set! addr value)
     (mtrace "memory-u32-set!: " (hex addr) " " (hex value))
-    (cond ((*write-hook* addr value 'u32))
-          ((fxzero? (fxand addr #b11))
+    (cond ((fxzero? (fxand addr #b11))
            (cond ((vector-ref RAM (RAM-page addr)) =>
                   (lambda (page)
                     (invalidate-translation addr)
-                    (bytevector-u32le-set! page (RAM-page-offset addr) value)))
+                    (if (bytevector? page)
+                        (bytevector-u32le-set! page (RAM-page-offset addr) value)
+                        (page addr 32 value))))
                  (else
                   (let ((page (make-bytevector page-size DEFAULT-MEMORY-FILL)))
                     (vector-set! RAM (RAM-page addr) page)
@@ -517,6 +524,54 @@
            (memory-u8-set! (fx+ addr 1) (fwand (fwasr value 8) #xff))
            (memory-u8-set! (fx+ addr 2) (fxand (fwasr value 16) #xff))
            (memory-u8-set! (fx+ addr 3) (fwasr value 24)))))
+
+;;; I/O
+
+  ;; The I/O ports are practically three different address spaces with
+  ;; 2^16 unique addresses each.
+  (define (make-empty-ports)
+    (vector (make-eqv-hashtable)
+            (make-eqv-hashtable)
+            (make-eqv-hashtable)))
+
+  (define (port-table size)
+    (case size
+      ((8) (vector-ref (machine-I/O (current-machine)) 0))
+      ((16) (vector-ref (machine-I/O (current-machine)) 1))
+      ((32) (vector-ref (machine-I/O (current-machine)) 2))))
+
+  (define (port-read port size)
+    (let* ((value (cond ((hashtable-ref (port-table size) port #f)
+                         => (lambda (port-proc) (port-proc port size)))
+                        (else
+                         (fw- (fwasl 1 size) 1)))))
+      (when (machine-debug (current-machine))
+        (print "port-read: " (hex port) " " size " => " value))
+      value))
+
+  (define (port-write port size value)
+    (when (machine-debug (current-machine))
+      (print "port-write: " (hex port) " " size " " (hex value)))
+    (cond ((hashtable-ref (port-table size) port #f)
+           => (lambda (port-proc)
+                (port-proc port size value)))))
+
+  ;; All accesses to the I/O port on the given port and using the
+  ;; given size are handled by the procedure. The interface is the
+  ;; same as used by the machine-hook-4k-page! procedure, except that
+  ;; the size of the access also is specified. The size must be one of
+  ;; 8, 16 or 32.
+  (define (machine-hook-i/o-port! M port size procedure)
+    (assert (< port (expt 2 16)))
+    (assert (memv size '(8 16 32)))
+    (assert (procedure? procedure))
+    (let ((table (port-table size)))
+      (cond ((hashtable-ref table port #f) =>
+             (lambda (previous)
+               (print "Warning: machine-hook-i/o-port! at port #x" (hex port)
+                      " and size " size " replaces " previous
+                      " with " procedure))))
+      (hashtable-set! table port procedure)))
 
 ;;; For reading instructions
 
@@ -790,6 +845,10 @@
   (define GROUP-3 '#(TEST TEST NOT NEG MUL IMUL DIV IDIV))
 
   (define GROUP-4/5 '#(INC DEC CALL CALLF JMP JMPF PUSH #F))
+
+  ;; (define GROUP-6 '#(SLDT STR LLDT LTR VERR VERW #F #F))
+
+  ;; (define GROUP-7 '#(SGDT SIDT LGDT LIDT SMSW #F LMSW #F))
 
   (define GROUP-8 '#(#F #F #F #F BT BTS BTR BTC))
 
@@ -1535,6 +1594,11 @@
     (%cg-int 4 #f return merge ip))     ;#OF
 
   (define (cg-int-invalid-opcode return merge start-ip)
+    (when (machine-debug (current-machine))
+      (let ((cs (machine-CS (current-machine))))
+        (print "Warning: invalid opcode at " (hex cs) ":" (hex start-ip)
+               ": " (number->string (memory-u8-ref (+ cs start-ip)) 16)
+               " " (number->string (memory-u8-ref (+ cs start-ip 1)) 16))))
     (%cg-int 6 #f return merge start-ip)) ;#UD
 
   (define (cg-int-device-not-available return merge start-ip)
@@ -2578,8 +2642,8 @@
     (case-lambda
       ((command addr size value)
        ;; TODO: Inline this code.
-       (assert (fixnum? value))
-       (assert (fixnum? addr))
+       ;; (assert (fixnum? value))
+       ;; (assert (fixnum? addr))
        (case command
          ((write-memory)
           (case size
@@ -2587,9 +2651,7 @@
             ((16) (memory-u16-set! addr value))
             ((32) (memory-u32-set! addr value))))
          ((write-i/o)
-          (when (machine-debug (current-machine))
-            (print "I/O write: " (list addr size value)))
-          #f)))
+          (port-write addr size value))))
       ((command addr size)
        (case command
          ((read-memory)
@@ -2598,12 +2660,7 @@
             ((16) (memory-u16-ref addr))
             ((32) (memory-u32-ref addr))))
          ((read-i/o)
-          (when (machine-debug (current-machine))
-            (print "I/O read: " (list addr size)))
-          (case size
-            ((8) #xff)
-            ((16) #xffff)
-            ((32) #xffffffff)))))))
+          (port-read addr size))))))
 
   (define (machine-run)
     (define M *current-machine*)
