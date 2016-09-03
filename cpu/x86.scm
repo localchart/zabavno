@@ -65,6 +65,7 @@
           memory-u8-ref memory-u16-ref memory-u32-ref
           memory-s8-ref memory-s16-ref memory-s32-ref
           memory-u8-set! memory-u16-set! memory-u32-set!
+          port-write port-read
           machine-hook-4k-page!
           machine-hook-i/o-port!
           machine-hook-interrupt!
@@ -89,10 +90,15 @@
   (define pretty-print
     (lambda (x) (write x (current-error-port)) (newline (current-error-port))))
 
-  (define code-env (environment '(except (rnrs (6)) bitwise-rotate-bit-field)
-                                '(zabavno cpu compat)
-                                '(zabavno cpu x86-utils)
-                                '(only (rnrs r5rs (6)) quotient remainder)))
+  (define code-env (environment
+                    '(except (rnrs (6)) bitwise-rotate-bit-field)
+                    '(zabavno cpu compat)
+                    '(zabavno cpu x86-utils)
+                    '(only (zabavno cpu x86)
+                           memory-u8-set! memory-u16-set! memory-u32-set!
+                           memory-u8-ref memory-u16-ref memory-u32-ref
+                           port-write port-read)
+                    '(only (rnrs r5rs (6)) quotient remainder)))
 
   ;; For debug printing.
   (define disassemble
@@ -1733,16 +1739,28 @@
   (define (generate-translation cs ip debug instruction-limit)
     (define (wrap expr)
       ;; Wrap the flags register and the arithmetic flags.
-      `(lambda (bus fl AX CX DX BX SP BP SI DI
-                    cs ds ss es fs gs)
+      `(lambda (fl AX CX DX BX SP BP SI DI
+                   cs ds ss es fs gs)
+         ;; Accessors for RAM and I/O ports. The case-lambda and the
+         ;; case will be optimized away by cp0.
          (define RAM
            (case-lambda
-             ((addr size) (bus 'read-memory addr size))
-             ((addr size value) (bus 'write-memory addr size value))))
+             ((addr size)
+              (case size
+                ((8) (memory-u8-ref addr))
+                ((16) (memory-u16-ref addr))
+                ((32) (memory-u32-ref addr))))
+             ((addr size value)
+              (case size
+                ((8) (memory-u8-set! addr value))
+                ((16) (memory-u16-set! addr value))
+                ((32) (memory-u32-set! addr value))))))
          (define I/O
            (case-lambda
-             ((addr size) (bus 'read-i/o addr size))
-             ((addr size value) (bus 'write-i/o addr size value))))
+             ((addr size)
+              (port-read addr size))
+             ((addr size value)
+              (port-write addr size value))))
          (let ((fl (lambda () fl))
                (fl-OF (lambda () (fxand fl ,flag-OF)))
                (fl-SF (lambda () (fxand fl ,flag-SF)))
@@ -2785,28 +2803,6 @@
 
 ;;; Main loop
 
-  (define bus
-    (case-lambda
-      ((command addr size value)
-       ;; TODO: Inline this code.
-       (case command
-         ((write-memory)
-          (case size
-            ((8) (memory-u8-set! addr value))
-            ((16) (memory-u16-set! addr value))
-            ((32) (memory-u32-set! addr value))))
-         ((write-i/o)
-          (port-write addr size value))))
-      ((command addr size)
-       (case command
-         ((read-memory)
-          (case size
-            ((8) (memory-u8-ref addr))
-            ((16) (memory-u16-ref addr))
-            ((32) (memory-u32-ref addr))))
-         ((read-i/o)
-          (port-read addr size))))))
-
   ;; Run instructions until HLT. If the return value is 'stop then the
   ;; machine has gotten stuck (HLT and IF=0) or an interrupt handler
   ;; has instructed the machine to stop. If the reutrn value is
@@ -2860,7 +2856,7 @@
       (let ((trans (translate cs ip debug (if trace 1 32))))
         (let-values (((ip^ fl^ AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^
                            cs^ ds^ ss^ es^ fs^ gs^)
-                      (trans bus fl AX CX DX BX SP BP SI DI
+                      (trans fl AX CX DX BX SP BP SI DI
                              cs ds ss es fs gs)))
           (cond (ip^
                  (loop fl^ ip^ cs^ ds^ ss^ es^ fs^ gs^
