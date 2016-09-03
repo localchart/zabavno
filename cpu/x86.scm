@@ -588,23 +588,26 @@
 
   (define (make-fallback-int-handlers)
     (define (fallback-handler M vec)
-      (case vec
-        ((#x06)
-         (let ((saved-ip (memory-u16-ref (real-pointer (machine-SS M) (machine-SP M))))
-               (saved-cs (memory-u16-ref (real-pointer (machine-SS M) (+ (machine-SP M) 2)))))
+      (let ((saved-ip (memory-u16-ref (real-pointer (machine-SS M) (machine-SP M))))
+            (saved-cs (memory-u16-ref (real-pointer (machine-SS M) (+ (machine-SP M) 2)))))
+        (case vec
+          ((#x00)
+           (print "Error: divide error at " (hex saved-cs) ":" (hex saved-ip))
+           'stop)
+          ((#x06)
            (print "Error: invalid opcode at "
                   (hex saved-cs) ":" (hex saved-ip)
                   ": "  (hex (memory-u8-ref (real-pointer saved-cs saved-ip)))
                   " " (hex (memory-u8-ref (real-pointer saved-cs (fx+ saved-ip 1))))
                   " ...: " (disassemble (copy-inst saved-cs saved-ip)))
-           'stop))
-        ((#x07)
-         ;; About "installed": there are x87 emulators for DOS.
-         (print "Error: no x87 emulation has been implemented/installed")
-         'stop)
-        (else
-         (print "Warning: unhandled INT #x" (hex vec) " AX=#x" (hex (machine-AX M)))
-         'resume)))
+           'stop)
+          ((#x07)
+           ;; About "installed": there are x87 emulators for DOS.
+           (print "Error: no x87 emulation has been implemented/installed")
+           'stop)
+          (else
+           (print "Warning: unhandled INT #x" (hex vec) " AX=#x" (hex (machine-AX M)))
+           'resume))))
     (make-vector 256 fallback-handler))
 
   ;; Hooks a real-mode interrupt vector. The procedure will be called
