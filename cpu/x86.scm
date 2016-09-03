@@ -437,7 +437,7 @@
                           (bytevector-u8-ref page (RAM-page-offset addr))
                           (page addr 8))))
                    (else DEFAULT-MEMORY-FILL))))
-      (mtrace "memory-u8-ref: " (hex addr) " => " (hex x))
+      (mtrace "memory-u8-ref: #x" (hex addr) " => #x" (hex x))
       x))
 
   (define (memory-u16-ref addr)
@@ -451,7 +451,7 @@
                    (else
                     (fxior (memory-u8-ref addr)
                            (fxasl (memory-u8-ref (fx+ addr 1)) 8))))))
-      (mtrace "memory-u16-ref: " (hex addr) " => " (hex x))
+      (mtrace "memory-u16-ref: #x" (hex addr) " => #x" (hex x))
       x))
 
   (define (memory-u32-ref addr)
@@ -467,7 +467,7 @@
                            (fxasl (memory-u8-ref (fx+ addr 1)) 8)
                            (fwasl (memory-u8-ref (fx+ addr 2)) 16)
                            (fwasl (memory-u8-ref (fx+ addr 3)) 24))))))
-      (mtrace "memory-u32-ref: " (hex addr) " => " (hex x))
+      (mtrace "memory-u32-ref: #x" (hex addr) " => #x" (hex x))
       x))
 
   (define (memory-s8-ref addr)
@@ -480,7 +480,7 @@
     (sign-extend (memory-u32-ref addr) 32))
 
   (define (memory-u8-set! addr value)
-    (mtrace "memory-u8-set!: " (hex addr) " " (hex value))
+    (mtrace "memory-u8-set!: #x" (hex addr) " #x" (hex value))
     (cond ((vector-ref RAM (RAM-page addr)) =>
            (lambda (page)
              (invalidate-translation addr)
@@ -494,7 +494,7 @@
              (bytevector-u8-set! page (RAM-page-offset addr) value)))))
 
   (define (memory-u16-set! addr value)
-    (mtrace "memory-u16-set!: " (hex addr) " " (hex value))
+    (mtrace "memory-u16-set!: #x" (hex addr) " #x" (hex value))
     (cond ((fxzero? (fxand addr #b1))
            (cond ((vector-ref RAM (RAM-page addr)) =>
                   (lambda (page)
@@ -512,7 +512,7 @@
            (memory-u8-set! (fx+ addr 1) (fxasr value 8)))))
 
   (define (memory-u32-set! addr value)
-    (mtrace "memory-u32-set!: " (hex addr) " " (hex value))
+    (mtrace "memory-u32-set!: #x" (hex addr) " #x" (hex value))
     (cond ((fxzero? (fxand addr #b11))
            (cond ((vector-ref RAM (RAM-page addr)) =>
                   (lambda (page)
@@ -552,12 +552,12 @@
                         (else
                          (fw- (fwasl 1 size) 1)))))
       (when (machine-debug (current-machine))
-        (print "port-read: " (hex port) " " size " => " value))
+        (print "port-read: #x" (hex port) " " size " => #x" (hex value)))
       value))
 
   (define (port-write port size value)
     (when (machine-debug (current-machine))
-      (print "port-write: " (hex port) " " size " " (hex value)))
+      (print "port-write: #x" (hex port) " " size " #x" (hex value)))
     (cond ((hashtable-ref (port-table size) port #f)
            => (lambda (port-proc)
                 (port-proc port size value)))))
@@ -1586,6 +1586,20 @@
                                ,@(cgl-arithmetic 'cmp-result #f eos 'CMP 'src0 'src1))
                           ,k-continue))))))
 
+  (define (cg-ins dseg repeat eos eas k-restart k-continue)
+    ;; Copies data from the port in DX to es:rDI, increments or
+    ;; decrements rDI. With repeat=z it repeats until rCX=0. For
+    ;; rDI/rCX eas is used, for the port size it uses eos.
+    `(let ((src-port ,(cg-register-ref idx-DX 16)))
+       ,(%cg-rep repeat eos eas k-restart k-continue
+                 `(let* ((dst-addr ,(cg+ 'es (cg-register-ref idx-DI eas)))
+                         ,@(cgl-register-update idx-DI eas (cg+ 'DI 'n)))
+                    (RAM dst-addr ,eos (I/O src-port ,eos))
+                    (if (not (eqv? count 0))
+                        (lp-rep DI SI count iterations)
+                        (let* (,@(if repeat (cgl-register-update idx-CX eas 'count) '()))
+                          ,k-continue))))))
+
   (define (cg-outs dseg repeat eos eas k-restart k-continue)
     ;; Reads from dseg:rSI and writes to the port in DX, increments or
     ;; decrements rSI. With repeat=z it repeats until rCX=0. For
@@ -2063,7 +2077,18 @@
                                              (cg-r/m-ref store location eos) imm)
                            ,@(cgl-reg-set modr/m eos 'result))
                       ,(continue #t ip))))))
-             ;; TODO: ins Yb *DX, ins Yz *DX
+             ((#x6C #x6D)               ; ins Yb *DX, ins Yz *DX
+              (let ((eos (if (eqv? op #x6C) 8 eos)))
+                (cond (repeat
+                       (cond ((not first?)
+                              (emit (return merge start-ip)))
+                             (else
+                              (emit
+                               `(let* (,@(cgl-merge-fl merge))
+                                  ,(cg-ins dseg repeat eos eas
+                                           (return #f start-ip) (return #f ip)))))))
+                      (else
+                       (emit (cg-ins dseg repeat eos eas '(error) (continue merge ip)))))))
              ((#x6E #x6F)               ; outs *DX Xb, outs *DX Xz
               (let ((eos (if (eqv? op #x6E) 8 eos)))
                 (cond ((eqv? repeat 'z)
