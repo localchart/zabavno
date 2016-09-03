@@ -255,6 +255,10 @@
 ;; for the emulator to save which flags are currently undefined.
 
 (run-tests
+ ;; AAA, AAS
+ '((xor ax ax) (mov al #x05) (add al #x07) (aaa))
+ '((mov ax #x0103) (sub al #x05) (aas))
+
  ;; AAD
  '((mov ax #x0409) (%u8 #xD5 10))
 

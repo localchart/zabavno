@@ -568,7 +568,7 @@
   ;; the size of the access also is specified. The size must be one of
   ;; 8, 16 or 32.
   (define (machine-hook-i/o-port! M port size procedure)
-    (assert (< port (expt 2 16)))
+    (assert (fx<? port (expt 2 16)))
     (assert (memv size '(8 16 32)))
     (assert (procedure? procedure))
     (let ((table (port-table size)))
@@ -1981,9 +1981,25 @@
              ;; 37 aaa is grouped with aas below.
              ((#x38 #x39 #x3A #x3B #x3C #x3D)
               (emit (cg-arithmetic-group op 'CMP ip cs dseg sseg eos eas continue)))
-             #;((#x37 #x3F)
-                ;; TODO: aaa aas
-                )
+             ((#x37 #x3F)               ; aaa, aas
+              (let ((fx^ (if (eqv? op #x37) 'fx+ 'fx-)))
+                (emit
+                 `(let* ((ax ,(cg-register-ref idx-AX 16))
+                         (nibble (fxand ax #xF))
+                         (ah (fxarithmetic-shift-right ax 8))
+                         (adjust (or (fx>? nibble 9) (not (eqv? (fl-AF) 0)))))
+                    (let* ((value (if adjust
+                                      (fxior (fxarithmetic-shift-left (,fx^ ah 1) 8)
+                                             (fxand (,fx^ nibble 6) #xF))
+                                      (fxand ax #xFF0F)))
+                           ,@(cgl-register-update idx-AX 16 'value)
+                           (fl-OF (lambda () 0)) ;undefined
+                           (fl-SF (lambda () 0)) ;undefined
+                           (fl-ZF (lambda () 0)) ;undefined
+                           (fl-AF (lambda () (if adjust ,flag-AF 0)))
+                           (fl-PF (lambda () 0)) ;undefined
+                           (fl-CF (lambda () (if adjust ,flag-CF 0))))
+                      ,(continue #t ip))))))
              ((#x40 #x41 #x42 #x43 #x44 #x45 #x46 #x47 #x48 #x49 #x4A #x4B #x4C #x4D #x4E #x4F)
               ;; inc/dec *rAX/r8 ... *rDI/r15
               (let* ((regno (fxand op #x7))
