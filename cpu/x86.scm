@@ -60,8 +60,13 @@
           machine-DS machine-DS-set!
           machine-FS machine-FS-set!
           machine-GS machine-GS-set!
+          machine-CR0 machine-CR0-set!
+          machine-CR2 machine-CR2-set!
+          machine-CR3 machine-CR3-set!
           machine-IP machine-IP-set!
           machine-FLAGS machine-FLAGS-set!
+          machine-CPL
+          machine-exception-cause machine-exception-cause-set!
           memory-u8-ref memory-u16-ref memory-u32-ref
           memory-s8-ref memory-s16-ref memory-s32-ref
           memory-u8-set! memory-u16-set! memory-u32-set!
@@ -97,7 +102,14 @@
                     '(only (zabavno cpu x86)
                            memory-u8-set! memory-u16-set! memory-u32-set!
                            memory-u8-ref memory-u16-ref memory-u32-ref
-                           port-write port-read)
+                           port-write port-read
+                           current-machine
+                           machine-CR0 machine-CR0-set!
+                           machine-CR2 machine-CR2-set!
+                           machine-CR3 machine-CR3-set!
+                           machine-CPL
+                           machine-exception-cause
+                           machine-exception-cause-set!)
                     '(only (rnrs r5rs (6)) quotient remainder)))
 
   ;; For debug printing.
@@ -148,11 +160,17 @@
             (mutable DS)
             (mutable FS)
             (mutable GS)
+            ;; Control registers
+            (mutable CR0)               ;system control flags
+            (mutable CR2)               ;linear address of page faults
+            (mutable CR3)               ;page table directory pointer
             ;; Other stuff
             (mutable IP)
             (mutable FLAGS)
+            (mutable CPL)
             (immutable int-handlers)
-            (immutable translations))
+            (immutable translations)
+            (mutable exception-cause))
     (protocol
      (lambda (p)
        (lambda ()
@@ -164,10 +182,13 @@
             0 0 0 0 0 0 0 0
             ;; Segment registers
             0 0 0 0 0 0
+            ;; Control registers
+            control-flags-always-set 0 0
             ;; Other stuff
-            0 (fxior flags-always-set flag-IF)
+            0 (fxior flags-always-set flag-IF) 0
             (make-fallback-int-handlers)
-            (make-eqv-hashtable))))))
+            (make-eqv-hashtable)
+            #f)))))
 
   (define *current-machine*)
   (define RAM)
@@ -358,6 +379,22 @@
                                        (expt 2 31)))
 
   (define flags-always-set #b10)
+
+  ;; System control flags in CR0.
+  (define control-flag-PG (expt 2 31))  ;paging
+  (define control-flag-AM (expt 2 18))  ;alignment mask
+  (define control-flag-ET (expt 2 4))   ;extension type
+  (define control-flag-TS (expt 2 3))   ;task switched
+  (define control-flag-EM (expt 2 2))   ;emulation
+  (define control-flag-MP (expt 2 1))   ;monitor coprocessor
+  (define control-flag-PE (expt 2 0))   ;protection enabled
+
+  (define control-flags-never-set
+    (bitwise-ior control-flag-ET
+                 control-flag-MP))
+
+  (define control-flags-always-set
+    (bitwise-ior))
 
 ;;; Memory
 
@@ -597,31 +634,36 @@
       (let ((saved-ip (memory-u16-ref (real-pointer (machine-SS M) (machine-SP M))))
             (saved-cs (memory-u16-ref (real-pointer (machine-SS M) (+ (machine-SP M) 2)))))
         (case vec
-          ((#x00)
+          ((0)
            (print "Error: uncaught divide error at " (hex saved-cs) ":" (hex saved-ip))
            'stop)
-          ((#x03)
+          ((3)
            (print "Error: uncaught breakpoint exception at "
                   (hex saved-cs) ":" (hex saved-ip))
            'stop)
-          ((#x04)
+          ((4)
            (print "Error: uncaught overflow exception at "
                   (hex saved-cs) ":" (hex saved-ip))
            'stop)
-          ((#x05)
+          ((5)
            (print "Error: uncaught BOUND range exception at "
                   (hex saved-cs) ":" (hex saved-ip))
            'stop)
-          ((#x06)
+          ((6)
            (print "Error: invalid opcode at "
                   (hex saved-cs) ":" (hex saved-ip)
                   ": "  (hex (memory-u8-ref (real-pointer saved-cs saved-ip)))
                   " " (hex (memory-u8-ref (real-pointer saved-cs (fx+ saved-ip 1))))
                   " ...: " (disassemble (copy-inst (fx* saved-cs 16) saved-ip)))
            'stop)
-          ((#x07)
+          ((7)
            ;; About "installed": there are x87 emulators for DOS.
            (print "Error: no x87 emulation has been implemented/installed")
+           'stop)
+          ((13)
+           (print "Error: uncaught general-protection exception at "
+                  (hex saved-cs) ":" (hex saved-ip) " due to: "
+                  (machine-exception-cause M))
            'stop)
           (else
            (print "Warning: unhandled INT #x" (hex vec) " AX=#x" (hex (machine-AX M)))
@@ -810,7 +852,7 @@
       ((6) (cg+ sseg (cgand #xffff (cg+ disp 'BP))))
       ((7) (cg+ dseg (cgand #xffff (cg+ disp 'BX))))))
 
-;;; Translation
+;;; Translation: code generation helpers
 
   (define (cgand op0 op1)
     (cond ((or (eqv? op0 0) (eqv? op1 0))
@@ -929,6 +971,80 @@
        (assert (eqv? eos 32))
        (cgand expr #xffffffff))))
 
+  (define (cg-pop eos target k)
+    ;; The target is a temporary variable, the register/memory write
+    ;; semantics are implemented by the caller.
+    ;; FIXME: Check the stack-size.
+    `(let* ((,target (RAM ,(cg+ 'ss 'SP) ,eos))
+            ,@(cgl-register-update idx-SP eos (cg+ (cg-trunc 'SP eos) (/ eos 8))))
+       ,k))
+
+  (define (cg-pop* eos x . x*)
+    (if (null? x*)
+        x
+        (cg-pop eos x (apply cg-pop* eos x*))))
+
+  (define (cg-push eos expr k)
+    (let ((n (/ eos 8)))
+      ;; On an 8086 the "push sp" instruction pushes SP after
+      ;; decrementing it, from 80286 and forward the original value is
+      ;; pushed.
+      `(begin
+         (assert (not (eqv? SP 1))) ; TODO: cg-int-stack (it needs
+                                    ; merge, start-ip, return)
+         (let* ((value ,(cg-trunc expr eos))
+                ,@(cgl-register-update idx-SP eos (cg- 'SP n))
+                (_ (RAM ,(cg+ 'ss (cg-trunc 'SP eos)) ,eos value)))
+           ,k))))
+
+  (define (cg-push* eos x . x*)
+    ;; TODO: A single stack bounds check?
+    (if (null? x*)
+        x
+        (cg-push eos x (apply cg-push* eos x*))))
+
+  (define (cg-test-cc cc)
+    ;; Appendix B, IA32 SDM Vol 1
+    (define (fl= f1 f2)
+      `(eqv? ,(fl0 f1) ,(fl0 f2)))
+    (define (fl0 fl)
+      `(eqv? ,fl 0))
+    (if (fxeven? cc)
+        `(not ,(cg-test-cc (fx+ cc 1)))
+        (case cc
+          ((#b0001) (fl0 '(fl-OF)))                            ;NO
+          ((#b0011) (fl0 '(fl-CF)))                            ;NB, AE
+          ((#b0101) (fl0 '(fl-ZF)))                            ;NE, NZ
+          ((#b0111) (fl0 (cgior '(fl-CF) '(fl-ZF))))           ;NBE, A
+          ((#b1001) (fl0 '(fl-SF)))                            ;NS
+          ((#b1011) (fl0 '(fl-PF)))                            ;NP, PO
+          ((#b1101) (fl= '(fl-SF) '(fl-OF)))                   ;NL, GE
+          ((#b1111) `(and ,(fl0 '(fl-ZF))                      ;NLE, G
+                          ,(fl= '(fl-SF) '(fl-OF))))
+          (else
+           (error 'cg-test-cc "Invalid condition code" cc)))))
+
+  (define (cgl-merge-fl merge)
+    ;; Merge updates of the arithmetic flags into the flags register.
+    (if merge
+        `((fl (lambda ()
+                (fxior (fxand (fl) ,(fxnot (fxior flag-OF flag-SF flag-ZF
+                                                  flag-AF flag-PF flag-CF)))
+                       (fl-OF) (fl-SF) (fl-ZF) (fl-PF)
+                       (fxior (fl-AF) (fl-CF))))))
+        '()))
+
+  (define (cgl-merge-fl/eval merge)
+    ;; Merge updates of the arithmetic flags into the flags register,
+    ;; and force evaluation of the flags register. Useful when fl is
+    ;; referenced multiple times: avoids allocation of a procedure and
+    ;; only evaluates the flags once.
+    `(,@(cgl-merge-fl merge)
+      (fl^ (fl))
+      (fl (lambda () fl^))))
+
+;;; Translation: arithmetic
+
   (define (cg-recover-sign expr eos)
     ;; Takes an unsigned integer and recovers the sign, in case it's
     ;; larger than the largest signed integer.
@@ -936,20 +1052,6 @@
        (if (>= x ,(expt 2 (- eos 1)))
            ,(cg- 'x (expt 2 eos))
            x)))
-
-  (define GROUP-1 '#(ADD OR ADC SBB AND SUB XOR CMP))
-
-  (define GROUP-2 '#(ROL ROR RCL RCR SHL SHR SHL SAR))
-
-  (define GROUP-3 '#(TEST TEST NOT NEG MUL IMUL DIV IDIV))
-
-  (define GROUP-4/5 '#(INC DEC CALL CALLF JMP JMPF PUSH #F))
-
-  ;; (define GROUP-6 '#(SLDT STR LLDT LTR VERR VERW #F #F))
-
-  ;; (define GROUP-7 '#(SGDT SIDT LGDT LIDT SMSW #F LMSW #F))
-
-  (define GROUP-8 '#(#F #F #F #F BT BTS BTR BTC))
 
   (define (cg-SF result eos)
     `(if ,(cgbit-set? result (fx- eos 1)) ,flag-SF 0))
@@ -1429,77 +1531,7 @@
       (else
        (error 'cgl-arithmetic "TODO: Unimplemented operator" operator))))
 
-  (define (cg-pop eos target k)
-    ;; The target is a temporary variable, the register/memory write
-    ;; semantics are implemented by the caller.
-    ;; FIXME: Check the stack-size.
-    `(let* ((,target (RAM ,(cg+ 'ss 'SP) ,eos))
-            ,@(cgl-register-update idx-SP eos (cg+ (cg-trunc 'SP eos) (/ eos 8))))
-       ,k))
-
-  (define (cg-pop* eos x . x*)
-    (if (null? x*)
-        x
-        (cg-pop eos x (apply cg-pop* eos x*))))
-
-  (define (cg-push eos expr k)
-    (let ((n (/ eos 8)))
-      ;; On an 8086 the "push sp" instruction pushes SP after
-      ;; decrementing it, from 80286 and forward the original value is
-      ;; pushed.
-      `(begin
-         (assert (not (eqv? SP 1))) ; TODO: cg-int-stack (it needs
-                                    ; merge, start-ip, return)
-         (let* ((value ,(cg-trunc expr eos))
-                ,@(cgl-register-update idx-SP eos (cg- 'SP n))
-                (_ (RAM ,(cg+ 'ss (cg-trunc 'SP eos)) ,eos value)))
-           ,k))))
-
-  (define (cg-push* eos x . x*)
-    ;; TODO: A single stack bounds check?
-    (if (null? x*)
-        x
-        (cg-push eos x (apply cg-push* eos x*))))
-
-  (define (cg-test-cc cc)
-    ;; Appendix B, IA32 SDM Vol 1
-    (define (fl= f1 f2)
-      `(eqv? ,(fl0 f1) ,(fl0 f2)))
-    (define (fl0 fl)
-      `(eqv? ,fl 0))
-    (if (fxeven? cc)
-        `(not ,(cg-test-cc (fx+ cc 1)))
-        (case cc
-          ((#b0001) (fl0 '(fl-OF)))                            ;NO
-          ((#b0011) (fl0 '(fl-CF)))                            ;NB, AE
-          ((#b0101) (fl0 '(fl-ZF)))                            ;NE, NZ
-          ((#b0111) (fl0 (cgior '(fl-CF) '(fl-ZF))))           ;NBE, A
-          ((#b1001) (fl0 '(fl-SF)))                            ;NS
-          ((#b1011) (fl0 '(fl-PF)))                            ;NP, PO
-          ((#b1101) (fl= '(fl-SF) '(fl-OF)))                   ;NL, GE
-          ((#b1111) `(and ,(fl0 '(fl-ZF))                      ;NLE, G
-                          ,(fl= '(fl-SF) '(fl-OF))))
-          (else
-           (error 'cg-test-cc "Invalid condition code" cc)))))
-
-  (define (cgl-merge-fl merge)
-    ;; Merge updates of the arithmetic flags into the flags register.
-    (if merge
-        `((fl (lambda ()
-                (fxior (fxand (fl) ,(fxnot (fxior flag-OF flag-SF flag-ZF
-                                                  flag-AF flag-PF flag-CF)))
-                       (fl-OF) (fl-SF) (fl-ZF) (fl-PF)
-                       (fxior (fl-AF) (fl-CF))))))
-        '()))
-
-  (define (cgl-merge-fl/eval merge)
-    ;; Merge updates of the arithmetic flags into the flags register,
-    ;; and force evaluation of the flags register. Useful when fl is
-    ;; referenced multiple times: avoids allocation of a procedure and
-    ;; only evaluates the flags once.
-    `(,@(cgl-merge-fl merge)
-      (fl^ (fl))
-      (fl (lambda () fl^))))
+;;; Translation: string instructiona
 
   (define (%cg-rep repeat eos eas k-restart k-continue body)
     ;; TODO: What happens to REPNE on instructions other than CMPS/SCAS?
@@ -1632,46 +1664,7 @@
                         (let* (,@(if repeat (cgl-register-update idx-CX eas 'count) '()))
                           ,k-continue))))))
 
-  (define (cg-arithmetic-group op operator ip cs dseg sseg eos eas continue)
-    (let ((subop (fwand op #x7)))
-      (case (fxasr subop 1)
-        ((0)
-         ;; op Eb Gv, op Ev Gv
-         (let ((eos (if (eqv? subop #x00) 8 eos)))
-           (with-r/m-operand ((ip store location modr/m)
-                              (cs ip dseg sseg eas))
-             `(let* (,@(cgl-arithmetic 'result #f eos operator
-                                       (cg-r/m-ref store location eos)
-                                       (cg-reg-ref modr/m eos))
-                     ,@(case operator
-                         ((TEST CMP) '())
-                         (else (cgl-r/m-set store location eos 'result))))
-                ,(continue #t ip)))))
-        ((1)
-         ;; op Gv Eb, op Gv Ev
-         (let ((eos (if (eqv? subop #x02) 8 eos)))
-           (with-r/m-operand ((ip store location modr/m)
-                              (cs ip dseg sseg eas))
-             `(let* (,@(cgl-arithmetic 'result #f eos operator
-                                       (cg-reg-ref modr/m eos)
-                                       (cg-r/m-ref store location eos))
-                     ,@(case operator
-                         ((TEST CMP) '())
-                         (else (cgl-reg-set modr/m eos 'result))))
-                ,(continue #t ip)))))
-        ((2)
-         ;; op *AL Ib, op *rAX Iz
-         (let ((eos (if (eqv? subop #x04) 8 eos)))
-           (with-instruction-immediate* ((imm <- cs ip eos))
-             `(let* (,@(cgl-arithmetic 'result #f eos operator
-                                       (cg-register-ref idx-AX eos)
-                                       imm)
-                     ,@(case operator
-                         ((TEST CMP) '())
-                         (else (cgl-register-update idx-AX eos 'result))))
-                ,(continue #t ip)))))
-        (else
-         (assert #f)))))
+;;; Translation: interrupts
 
   ;; Generate code for a software interrupt, fault or trap.
   (define (%cg-int vec error-code return merge ip)
@@ -1723,6 +1716,13 @@
   (define (cg-int-stack return merge start-ip)
     (%cg-int 12 0 return merge start-ip)) ;#SS
 
+  (define (cg-int-general-protection error-code return merge start-ip cause)
+    `(let ()
+       ;; This #GP explains the cause of the #GP, due to frustration
+       ;; with random #GPs from CPUs.
+       (machine-exception-cause-set! (current-machine) ,cause)
+       ,(%cg-int 13 error-code return merge start-ip))) ;#GP
+
   (define (cg-load-far-pointer sreg location modr/m eos continue merge ip)
     `(let* ((addr ,location)
             (off (RAM addr ,eos))
@@ -1730,6 +1730,89 @@
        (let* (,@(cgl-reg-set modr/m eos 'off)
               (,sreg ,(cgasl 'seg 4)))
          ,(continue merge ip))))
+
+  (define GROUP-1 '#(ADD OR ADC SBB AND SUB XOR CMP))
+
+  (define GROUP-2 '#(ROL ROR RCL RCR SHL SHR SHL SAR))
+
+  (define GROUP-3 '#(TEST TEST NOT NEG MUL IMUL DIV IDIV))
+
+  (define GROUP-4/5 '#(INC DEC CALL CALLF JMP JMPF PUSH #F))
+
+  ;; (define GROUP-6 '#(SLDT STR LLDT LTR VERR VERW #F #F))
+
+  (define GROUP-7 '#(SGDT SIDT LGDT LIDT SMSW #F LMSW #F))
+
+  (define GROUP-8 '#(#F #F #F #F BT BTS BTR BTC))
+
+;;; Translation: system instructions
+
+  (define (cg-load-cr0 value src-mask eos continue return merge start-ip ip)
+    `(let* ((M (current-machine))
+            (CR0 (machine-CR0 M))
+            (new-CR0
+             ,(cgior (cgand 'CR0 (fxnot src-mask))
+                     (cgior (cgand (cgand 'value src-mask)
+                                   (fwnot control-flags-never-set))
+                            control-flags-always-set)))
+            (cause
+             (cond ((not (eqv? (machine-CPL M) 0))
+                    "CPL is not 0")
+                   ((not (eqv? ,(cgand 'new-CR0 control-flag-PE) 0))
+                    "CR0.PE is not supported")
+                   ((not (eqv? (eqv? ,(cgand 'new-CR0 control-flag-PE) 0)
+                               (eqv? ,(cgand 'new-CR0 control-flag-PG) 0)))
+                    "CR0.PG requires CR0.PE")
+                   ;; TODO: Some more checks are needed.
+                   (else #f))))
+       (cond (cause
+              ,(cg-int-general-protection 0 return merge start-ip 'cause))
+             (else
+              (machine-CR0-set! M new-CR0)
+              ,(continue merge ip)))))
+
+;;; Translation: opcode decoding
+
+  (define (cg-arithmetic-group op operator ip cs dseg sseg eos eas continue)
+    (let ((subop (fwand op #x7)))
+      (case (fxasr subop 1)
+        ((0)
+         ;; op Eb Gv, op Ev Gv
+         (let ((eos (if (eqv? subop #x00) 8 eos)))
+           (with-r/m-operand ((ip store location modr/m)
+                              (cs ip dseg sseg eas))
+             `(let* (,@(cgl-arithmetic 'result #f eos operator
+                                       (cg-r/m-ref store location eos)
+                                       (cg-reg-ref modr/m eos))
+                     ,@(case operator
+                         ((TEST CMP) '())
+                         (else (cgl-r/m-set store location eos 'result))))
+                ,(continue #t ip)))))
+        ((1)
+         ;; op Gv Eb, op Gv Ev
+         (let ((eos (if (eqv? subop #x02) 8 eos)))
+           (with-r/m-operand ((ip store location modr/m)
+                              (cs ip dseg sseg eas))
+             `(let* (,@(cgl-arithmetic 'result #f eos operator
+                                       (cg-reg-ref modr/m eos)
+                                       (cg-r/m-ref store location eos))
+                     ,@(case operator
+                         ((TEST CMP) '())
+                         (else (cgl-reg-set modr/m eos 'result))))
+                ,(continue #t ip)))))
+        ((2)
+         ;; op *AL Ib, op *rAX Iz
+         (let ((eos (if (eqv? subop #x04) 8 eos)))
+           (with-instruction-immediate* ((imm <- cs ip eos))
+             `(let* (,@(cgl-arithmetic 'result #f eos operator
+                                       (cg-register-ref idx-AX eos)
+                                       imm)
+                     ,@(case operator
+                         ((TEST CMP) '())
+                         (else (cgl-register-update idx-AX eos 'result))))
+                ,(continue #t ip)))))
+        (else
+         (assert #f)))))
 
   ;; Translate a basic block. This procedure reads instructions at
   ;; cs:ip until it finds a branch of some kind (or something
@@ -1839,12 +1922,83 @@
               ;; Two-byte opcodes.
               (with-instruction-u8* ((op1 <- cs ip))
                 (case op1
-                  ;; TODO: #x00 GROUP-6
-                  ;; TODO: #x01 GROUP-7
-                  ;; TODO: #x02 lar
-                  ;; TODO: #x03 lsl
-                  ;; TODO: #x06 clts
-                  ;; TODO: #x20-#x24, #x26 mov for CR*, DR*
+                  ;; TODO: If PE is implemented: #x00 GROUP-6
+                  ((#x01)               ; Group 7
+                   (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                     (case (vector-ref GROUP-7 (ModR/M-reg modr/m))
+                       ((LMSW)          ; lmsw Ew
+                        ;; XXX: LMSW may try to enable protected mode.
+                        ;; It updates the lower 16 bits of CR0.
+                        (if (not first?)
+                            (emit (return merge start-ip))
+                            (emit
+                             `(let ((value ,(cg-r/m-ref store location eos)))
+                                ;; This checks CPL.
+                                ,(cg-load-cr0 'value #xFFFF eos
+                                              continue return merge start-ip ip)))))
+                       ((SMSW)          ; smsw Rv/Mw
+                        (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                          (let ((eos (if (eqv? store 'mem) 16 eos)))
+                            (emit
+                             `(let* ((value (machine-CR0 (current-machine)))
+                                     ,@(cgl-r/m-set store location eos 'value))
+                                ,(continue merge ip))))))
+                       ;; TODO: If PE is implemented: SGDT, SIDT, LGDT, LIDT.
+                       (else
+                        (emit (cg-int-invalid-opcode return merge cs start-ip))))))
+                  ;; TODO: If PE is implemented: #x02 lar, #x03 lsl
+                  ((#x06)               ; clts
+                   ;; Clear the Task Switched flag. Should be OK to
+                   ;; emit in the middle of other instructions.
+                   (emit
+                    `(let* ((M (current-machine)))
+                       (cond ((eqv? (machine-CPL M) 0)
+                              (machine-CR0-set! M ,(cgand '(machine-CR0 M)
+                                                          (fxnot control-flag-TS)))
+                              ,(continue merge ip))
+                             (else
+                              ,(cg-int-general-protection 0 return merge start-ip
+                                                          "CPL is not 0"))))))
+                  ((#x20)               ;mov Rd/q Cd/q
+                   (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                     (emit
+                      (if (and (eq? store 'reg) (memv (ModR/M-reg modr/m) '(0 2 3)))
+                          ;; XXX: A bit unusual. Updates the whole
+                          ;; register, clearing any upper bits to
+                          ;; zero.
+                          `(let* ((value ,(case (ModR/M-reg modr/m)
+                                            ((0) '(machine-CR0 (current-machine)))
+                                            ((2) '(machine-CR2 (current-machine)))
+                                            ((3) '(machine-CR3 (current-machine)))))
+                                  ,@(cgl-r/m-set store location 32 'value))
+                             ,(continue merge ip))
+                          (cg-int-invalid-opcode return merge cs start-ip)))))
+                  ;; TODO: #x21 mov Rd/q Dd/q
+                  ((#x22)               ;mov Cd/q Rd/q
+                   (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                     (cond ((not first?)
+                            (emit (return merge start-ip)))
+                           ((and (eq? store 'reg) (eqv? (ModR/M-reg modr/m) 0))
+                            (emit
+                             `(let ((value ,(cg-r/m-ref store location eos)))
+                                ;; This checks CPL.
+                                ,(cg-load-cr0 'value #xFFFFFFFF eos
+                                              continue return merge start-ip ip))))
+                           ((and (eq? store 'reg) (memv (ModR/M-reg modr/m) '(2 3)))
+                            (emit
+                             `(let* ((M (current-machine))
+                                     (value ,(cg-r/m-ref store location eos)))
+                                (cond ((eqv? (machine-CPL M) 0)
+                                       ,(case (ModR/M-reg modr/m)
+                                          ((2) '(machine-CR2-set! M value))
+                                          ((3) '(machine-CR3-set! M value)))
+                                       ,(continue merge ip))
+                                      (else
+                                       ,(cg-int-general-protection 0 return merge start-ip
+                                                                   "CPL is not 0"))))))
+                           (else
+                            (emit (cg-int-invalid-opcode return merge cs start-ip))))))
+                  ;; TODO: #x23 mov Dd/q Rd/q
                   ((#x80 #x81 #x82 #x83 #x84 #x85 #x86 #x87 #x88 #x89 #x8A #x8B #x8C #x8D #x8E #x8F)
                    ;; Jcc Jz
                    (with-instruction-immediate-sx* ((disp <- cs ip eos))
@@ -2098,7 +2252,7 @@
                             ,(continue merge ip)
                             ,(cg-int-bound-range return merge start-ip))))
                     (emit (cg-int-invalid-opcode return merge cs start-ip)))))
-             ;; TODO: 63 arpl Ew Rw
+             ;; TODO: If PE is implemented: #x63 arpl Ew Rw
              ((#x68)                    ; push Iz
               (with-instruction-immediate* ((imm <- cs ip eos))
                 (emit (cg-push eos imm (continue merge ip)))))
@@ -2272,8 +2426,9 @@
                                   (ip ,off))
                               ,(return merge 'ip))))))
              ((#x9B)                    ; wait/fwait
-              ;; TODO: #NM if MP and TS are both set in CR0
-              (emit `(if #f
+              (emit `(if ,(eqv? (cgand (machine-CR0 (current-machine))
+                                       (cgior control-flag-MP control-flag-TS))
+                                (cgior control-flag-MP control-flag-TS))
                          ,(cg-int-device-not-available return merge start-ip)
                          ,(continue merge ip))))
              ((#x9C)                    ; pushfw / pushfd
