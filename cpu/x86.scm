@@ -611,7 +611,7 @@
                   (hex saved-cs) ":" (hex saved-ip)
                   ": "  (hex (memory-u8-ref (real-pointer saved-cs saved-ip)))
                   " " (hex (memory-u8-ref (real-pointer saved-cs (fx+ saved-ip 1))))
-                  " ...: " (disassemble (copy-inst saved-cs saved-ip)))
+                  " ...: " (disassemble (copy-inst (fx* saved-cs 16) saved-ip)))
            'stop)
           ((#x07)
            ;; About "installed": there are x87 emulators for DOS.
@@ -1704,9 +1704,10 @@
 
   (define (cg-int-invalid-opcode return merge cs start-ip)
     (when (machine-debug (current-machine))
-      (print "Warning: translating invalid opcode at " (hex cs) ":" (hex start-ip)
-             ": " (number->string (memory-u8-ref (real-pointer cs start-ip)) 16)
-             " " (number->string (memory-u8-ref (real-pointer cs (+ start-ip 1))) 16)
+      (print "Warning: translating invalid opcode at "
+             (hex (fxarithmetic-shift-right cs 4)) ":" (hex start-ip)
+             ": " (number->string (memory-u8-ref (+ cs start-ip)) 16)
+             " " (number->string (memory-u8-ref (+ cs (+ start-ip 1))) 16)
              " ...: " (disassemble (copy-inst cs start-ip))))
     (%cg-int 6 #f return merge start-ip)) ;#UD
 
