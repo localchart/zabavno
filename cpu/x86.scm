@@ -592,7 +592,19 @@
             (saved-cs (memory-u16-ref (real-pointer (machine-SS M) (+ (machine-SP M) 2)))))
         (case vec
           ((#x00)
-           (print "Error: divide error at " (hex saved-cs) ":" (hex saved-ip))
+           (print "Error: uncaught divide error at " (hex saved-cs) ":" (hex saved-ip))
+           'stop)
+          ((#x03)
+           (print "Error: uncaught breakpoint exception at "
+                  (hex saved-cs) ":" (hex saved-ip))
+           'stop)
+          ((#x04)
+           (print "Error: uncaught overflow exception at "
+                  (hex saved-cs) ":" (hex saved-ip))
+           'stop)
+          ((#x05)
+           (print "Error: uncaught BOUND range exception at "
+                  (hex saved-cs) ":" (hex saved-ip))
            'stop)
           ((#x06)
            (print "Error: invalid opcode at "
@@ -1687,6 +1699,9 @@
   (define (cg-int-overflow return merge ip)
     (%cg-int 4 #f return merge ip))     ;#OF
 
+  (define (cg-int-bound-range return merge start-ip)
+    (%cg-int 5 #f return merge start-ip)) ;#BR
+
   (define (cg-int-invalid-opcode return merge cs start-ip)
     (when (machine-debug (current-machine))
       (print "Warning: translating invalid opcode at " (hex cs) ":" (hex start-ip)
@@ -2053,7 +2068,17 @@
                                 ,@(cgl-register-update idx-SI eos 'SI^)
                                 ,@(cgl-register-update idx-DI eos 'DI^))
                            ,(continue merge ip)))))
-             ;; TODO: 62 bound Gv, Ma
+             ((#x62)                    ; bound Gv, Ma
+              (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                (if (eq? store 'mem)
+                    (emit
+                     `(let* ((lower ,(cg-r/m-ref store location eos))
+                             (upper ,(cg-r/m-ref store (cg+ location 2) eos))
+                             (reg ,(cg-reg-ref modr/m eos)))
+                        (if (<= lower reg upper)
+                            ,(continue merge ip)
+                            ,(cg-int-bound-range return merge start-ip))))
+                    (emit (cg-int-invalid-opcode return merge cs start-ip)))))
              ;; TODO: 63 arpl Ew Rw
              ((#x68)                    ; push Iz
               (with-instruction-immediate* ((imm <- cs ip eos))

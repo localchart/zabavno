@@ -160,6 +160,7 @@
       (lambda ()
         (machine-debug-set! m #t)
         (machine-trace-set! m #t)
+        (enable-interrupt-hooks)
         ;; Copy in the code.
         (machine-IP-set! m #x100)
         (let ((addr (real-pointer (machine-CS m) (machine-IP m))))
@@ -255,6 +256,13 @@
 ;; for the emulator to save which flags are currently undefined.
 
 (run-tests
+ ;; BOUND
+ '((push 1)
+   (push 0)
+   (mov bp sp)
+   (mov ax 1)
+   (%u8 #x36 #x62 #x46 #x00)) ; (bound ax (mem+ ss bp))
+
  ;; AAA, AAS
  '((xor ax ax) (mov al #x05) (add al #x07) (aaa))
  '((mov ax #x0103) (sub al #x05) (aas))
