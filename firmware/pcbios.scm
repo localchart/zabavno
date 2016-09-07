@@ -361,14 +361,14 @@
             (let ((drive-type #x04) ;1.44M
                   (maximum-cylinder-number 80)
                   (maximum-sector-number 18)
-                  (maximum-head-number 2)
+                  (maximum-head-number 1)
                   (number-of-drives 1))
               (let ((ax 0)
                     (bx drive-type)
                     (cx (fxior
-                         (fxarithmetic-shift-left (fxbit-field maximum-cylinder-number 0 6) 8)
-                         (fxarithmetic-shift-left (fxbit-field maximum-cylinder-number 6 8) 5)
-                         (fxbit-field maximum-sector-number 0 5)))
+                         (fxarithmetic-shift-left (fxbit-field maximum-cylinder-number 0 8) 8)
+                         (fxarithmetic-shift-left (fxbit-field maximum-cylinder-number 8 10) 6)
+                         (fxbit-field maximum-sector-number 0 6)))
                     (dx (fxior
                          (fxarithmetic-shift-left maximum-head-number 8)
                          number-of-drives))
