@@ -1820,55 +1820,74 @@
         (else
          (assert #f)))))
 
+  ;; Translated expressions are wrapped inside the lambda this
+  ;; procedure creates. This defines the interface for calling
+  ;; translated instructions.
+  (define (wrap expr)
+    ;; Wrap the flags register and the arithmetic flags.
+    `(lambda (abort fl AX CX DX BX SP BP SI DI
+                    cs ds ss es fs gs)
+       ;; Accessors for RAM and I/O ports. The case-lambda and the
+       ;; case will be optimized away by cp0.
+       (define RAM
+         (case-lambda
+           ((addr size)
+            (case size
+              ((8) (memory-u8-ref addr))
+              ((16) (memory-u16-ref addr))
+              ((32) (memory-u32-ref addr))))
+           ((addr size value)
+            (case size
+              ((8) (memory-u8-set! addr value))
+              ((16) (memory-u16-set! addr value))
+              ((32) (memory-u32-set! addr value))))))
+       (define I/O
+         (case-lambda
+           ((addr size)
+            (port-read addr size))
+           ((addr size value)
+            (port-write addr size value))))
+       ;; Individual flags are wrapped in lambdas. All these lambdas
+       ;; will be optimized away, but most will not even have their
+       ;; bodies evaluated (e.g. when an ADD is followed by another
+       ;; ADD, the flags from the first ADD are not used and those
+       ;; fl-* procedures will never be called).
+       (let ((fl (lambda () fl))
+             (fl-OF (lambda () (fxand fl ,flag-OF)))
+             (fl-SF (lambda () (fxand fl ,flag-SF)))
+             (fl-ZF (lambda () (fxand fl ,flag-ZF)))
+             (fl-AF (lambda () (fxand fl ,flag-AF)))
+             (fl-PF (lambda () (fxand fl ,flag-PF)))
+             (fl-CF (lambda () (fxand fl ,flag-CF))))
+         (,expr fl AX CX DX BX SP BP SI DI
+                cs ds ss es fs gs))))
+
+  ;; Each expression emitted by the translation is furthermore wrapped
+  ;; in a lambda. Translated code is in continuation passing style.
+  (define (emit expr)
+    `(lambda (fl AX CX DX BX SP BP SI DI
+                 cs ds ss es fs gs)
+       ,expr))
+
+  ;; Returns from the translated code. Unwraps the flags register,
+  ;; possibly merging updates from arithmetic operations.
+  (define (return merge ip)
+    `(let* (,@(cgl-merge-fl merge))
+       (values ,ip (fl) AX CX DX BX SP BP SI DI
+               cs ds ss es fs gs)))
+
+  ;; Returns to to machine-run from anywhere in the instruction.
+  (define (abort merge ip abort-cause)
+    `(let* (,@(cgl-merge-fl merge))
+       (abort ,ip (fl) AX CX DX BX SP BP SI DI
+              cs ds ss es fs gs ',abort-cause)))
+
   ;; Translate a basic block. This procedure reads instructions at
   ;; cs:ip until it finds a branch of some kind (or something
   ;; complicated), which ends the basic block. It returns a procedure
   ;; that takes the most-used machine registers, does something to
   ;; them and the machine, and returns a new set of registers.
   (define (generate-translation cs ip debug instruction-limit)
-    (define (wrap expr)
-      ;; Wrap the flags register and the arithmetic flags.
-      `(lambda (fl AX CX DX BX SP BP SI DI
-                   cs ds ss es fs gs)
-         ;; Accessors for RAM and I/O ports. The case-lambda and the
-         ;; case will be optimized away by cp0.
-         (define RAM
-           (case-lambda
-             ((addr size)
-              (case size
-                ((8) (memory-u8-ref addr))
-                ((16) (memory-u16-ref addr))
-                ((32) (memory-u32-ref addr))))
-             ((addr size value)
-              (case size
-                ((8) (memory-u8-set! addr value))
-                ((16) (memory-u16-set! addr value))
-                ((32) (memory-u32-set! addr value))))))
-         (define I/O
-           (case-lambda
-             ((addr size)
-              (port-read addr size))
-             ((addr size value)
-              (port-write addr size value))))
-         (let ((fl (lambda () fl))
-               (fl-OF (lambda () (fxand fl ,flag-OF)))
-               (fl-SF (lambda () (fxand fl ,flag-SF)))
-               (fl-ZF (lambda () (fxand fl ,flag-ZF)))
-               (fl-AF (lambda () (fxand fl ,flag-AF)))
-               (fl-PF (lambda () (fxand fl ,flag-PF)))
-               (fl-CF (lambda () (fxand fl ,flag-CF))))
-           (,expr fl AX CX DX BX SP BP SI DI
-                  cs ds ss es fs gs))))
-    (define (return merge ip)
-      ;; Unwraps the flags register, possibly merging updates from
-      ;; arithmetic operations.
-      `(let* (,@(cgl-merge-fl merge))
-         (values ,ip (fl) AX CX DX BX SP BP SI DI
-                 cs ds ss es fs gs)))
-    (define (emit expr)
-      `(lambda (fl AX CX DX BX SP BP SI DI
-                   cs ds ss es fs gs)
-         ,expr))
     (wrap
      (let next ((merge #f)
                 (ip ip)
@@ -1877,7 +1896,7 @@
          ;; XXX: Note that continue (or return) must be called with
          ;; merge set to #t if the arithmetic flags were updated (e.g.
          ;; cgl-arithmetic was used).
-         (let ((instruction-count (+ instruction-count 1)))
+         (let ((instruction-count (fx+ instruction-count 1)))
            (if (fx>=? instruction-count instruction-limit)
                (return merge ip)
                `(,(next merge ip instruction-count)
@@ -2779,7 +2798,7 @@
               ;; triggers the BIOS library if IF=0.
               (if (not first?)
                   (emit (return merge start-ip))
-                  (emit (return merge #f))))
+                  (emit (abort merge start-ip 'HLT))))
              ((#xF5)                    ; cmc
               (emit
                `(let* ((fl-CF (lambda () (fxxor (fl-CF) ,flag-CF))))
@@ -2964,95 +2983,119 @@
 
 ;;; Main loop
 
+  (define (%run-until-abort M debug instruction-limit
+                            fl ip AX CX DX BX SP BP SI DI
+                            cs ds ss es fs gs)
+    (call/cc
+      (lambda (abort)
+        (let loop ((ip ip) (fl fl) (AX AX) (CX CX) (DX DX) (BX BX)
+                   (SP SP) (BP BP) (SI SI) (DI DI)
+                   (cs cs) (ds ds) (ss ss) (es es) (fs fs) (gs gs))
+          (when debug
+            (print)
+            (print "; AX=" (hex AX 4) "  BX=" (hex BX 4)
+                   "  CX=" (hex CX 4) "  DX=" (hex DX 4)
+                   "  SP=" (hex SP 4) "  BP=" (hex BP 4)
+                   "  SI=" (hex SI 4) "  DI=" (hex DI 4))
+            (print* "; DS=" (hex (segment-selector ds) 4)
+                    "  ES=" (hex (segment-selector es) 4)
+                    "  FS=" (hex (segment-selector fs) 4)
+                    "  GS=" (hex (segment-selector gs) 4)
+                    "  SS=" (hex (segment-selector ss) 4)
+                    "  CS=" (hex (segment-selector cs) 4)
+                    "  IP=" (hex ip 4)
+                    "  ")
+            (print-flags fl)
+            (newline (current-error-port))
+            (print* "SS:SP: ")
+            (print-memory (fx+ ss SP) 16)
+            ;; (print* "@SS:BP: ")
+            ;; (display-memory (fx+ ss BP) 16)
+            (print* "CS:IP: ")
+            (print-memory (fx+ cs ip) 16))
+          ;; Translate instruction(s) or get an existing translation.
+          (let ((trans (translate cs ip debug instruction-limit)))
+            ;; Call the translation and get new values for the
+            ;; registers. The translation may choose to abort in the
+            ;; middle of a translation.
+            (let-values (((ip^ fl^ AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^
+                               cs^ ds^ ss^ es^ fs^ gs^)
+                          (trans abort fl AX CX DX BX SP BP SI DI
+                                 cs ds ss es fs gs)))
+              (loop ip^ fl^ AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^
+                    cs^ ds^ ss^ es^ fs^ gs^)))))))
+
   ;; Run instructions until HLT. If the return value is 'stop then the
   ;; machine has gotten stuck (HLT and IF=0) or an interrupt handler
-  ;; has instructed the machine to stop. If the reutrn value is
+  ;; has instructed the machine to stop. If the return value is
   ;; 'reboot then the machine should be rebooted.
   (define (machine-run)
     (define M *current-machine*)
     (define debug (machine-debug M))
     (define trace (machine-trace M))
-    (let loop ((fl (fxand (fxior (machine-FLAGS M)
-                                 flags-always-set)
-                          (fxnot flags-never-set)))
-               (ip (machine-IP M))
-               (cs (fxasl (machine-CS M) 4))
-               (ds (fxasl (machine-DS M) 4))
-               (ss (fxasl (machine-SS M) 4))
-               (es (fxasl (machine-ES M) 4))
-               (fs (fxasl (machine-FS M) 4))
-               (gs (fxasl (machine-GS M) 4))
-               ;; regs
-               (AX (machine-AX M))
-               (CX (machine-CX M))
-               (DX (machine-DX M))
-               (BX (machine-BX M))
-               (SP (machine-SP M))
-               (BP (machine-BP M))
-               (SI (machine-SI M))
-               (DI (machine-DI M)))
-      (when debug
-        (print)
-        (print "; AX=" (hex AX 4) "  BX=" (hex BX 4)
-               "  CX=" (hex CX 4) "  DX=" (hex DX 4)
-               "  SP=" (hex SP 4) "  BP=" (hex BP 4)
-               "  SI=" (hex SI 4) "  DI=" (hex DI 4))
-        (print* "; DS=" (hex (segment-selector ds) 4)
-                "  ES=" (hex (segment-selector es) 4)
-                "  FS=" (hex (segment-selector fs) 4)
-                "  GS=" (hex (segment-selector gs) 4)
-                "  SS=" (hex (segment-selector ss) 4)
-                "  CS=" (hex (segment-selector cs) 4)
-                "  IP=" (hex ip 4)
-                "  ")
-        (print-flags fl)
-        (newline (current-error-port))
-        (print* "SS:SP: ")
-        (print-memory (fx+ ss SP) 16)
-        ;; (print* "@SS:BP: ")
-        ;; (display-memory (fx+ ss BP) 16)
-        (print* "CS:IP: ")
-        (print-memory (fx+ cs ip) 16))
-
-      (let ((trans (translate cs ip debug (if trace 1 32))))
-        (let-values (((ip^ fl^ AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^
-                           cs^ ds^ ss^ es^ fs^ gs^)
-                      (trans fl AX CX DX BX SP BP SI DI
-                             cs ds ss es fs gs)))
-          (cond (ip^
-                 (loop fl^ ip^ cs^ ds^ ss^ es^ fs^ gs^
-                       AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^))
-                (else                   ;hlt was executed
-                 (machine-AX-set! M AX^)
-                 (machine-CX-set! M CX^)
-                 (machine-DX-set! M DX^)
-                 (machine-BX-set! M BX^)
-                 (machine-SP-set! M SP^)
-                 (machine-BP-set! M BP^)
-                 (machine-SI-set! M SI^)
-                 (machine-DI-set! M DI^)
-                 (machine-ES-set! M (segment-selector es^))
-                 (machine-CS-set! M (segment-selector cs^))
-                 (machine-SS-set! M (segment-selector ss^))
-                 (machine-DS-set! M (segment-selector ds^))
-                 (machine-FS-set! M (segment-selector fs^))
-                 (machine-GS-set! M (segment-selector gs^))
-                 (machine-IP-set! M ip)
-                 (machine-FLAGS-set! M fl^)
-                 ;; Default real-mode interrupt handlers.
-                 (cond ((eqv? (fxand fl^ flag-IF) 0)
-                        ;; TODO: It would be better to not hardcode this.
-                        (cond ((and (eqv? cs^ #xF0000) (fx<=? ip #xFF))
-                               (let* ((int-vector ip)
-                                      (result (call-interrupt-handler int-vector)))
-                                 (when debug
-                                   (print "INT #x" (hex int-vector) " AX=#x" (hex AX^)))
-                                 (cond ((memq result '(stop reboot))
-                                        result)
-                                       (else
-                                        (machine-IP-set! M #x100)
-                                        (machine-run)))))
-                              (else
-                               (print "Warning: the HLT instruction was executed with IF clear, exiting.")
-                               'stop)))
-                       (else 'hlt)))))))))
+    (let ((fl (fxand (fxior (machine-FLAGS M)
+                            flags-always-set)
+                     (fxnot flags-never-set)))
+          (ip (machine-IP M))
+          (cs (fxasl (machine-CS M) 4))
+          (ds (fxasl (machine-DS M) 4))
+          (ss (fxasl (machine-SS M) 4))
+          (es (fxasl (machine-ES M) 4))
+          (fs (fxasl (machine-FS M) 4))
+          (gs (fxasl (machine-GS M) 4))
+          (AX (machine-AX M))
+          (CX (machine-CX M))
+          (DX (machine-DX M))
+          (BX (machine-BX M))
+          (SP (machine-SP M))
+          (BP (machine-BP M))
+          (SI (machine-SI M))
+          (DI (machine-DI M)))
+      (let-values (((ip^ fl^ AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^
+                         cs^ ds^ ss^ es^ fs^ gs^ abort-cause)
+                    (%run-until-abort M debug (if trace 1 32)
+                                      fl ip AX CX DX BX SP BP SI DI
+                                      cs ds ss es fs gs)))
+        ;; Save the new machine state.
+        (machine-AX-set! M AX^)
+        (machine-CX-set! M CX^)
+        (machine-DX-set! M DX^)
+        (machine-BX-set! M BX^)
+        (machine-SP-set! M SP^)
+        (machine-BP-set! M BP^)
+        (machine-SI-set! M SI^)
+        (machine-DI-set! M DI^)
+        (machine-ES-set! M (segment-selector es^))
+        (machine-CS-set! M (segment-selector cs^))
+        (machine-SS-set! M (segment-selector ss^))
+        (machine-DS-set! M (segment-selector ds^))
+        (machine-FS-set! M (segment-selector fs^))
+        (machine-GS-set! M (segment-selector gs^))
+        (machine-IP-set! M ip^)
+        (machine-FLAGS-set! M fl^)
+        (case abort-cause
+          ((HLT)
+           (cond ((eqv? (fxand fl^ flag-IF) 0)
+                  (cond
+                    ((and (eqv? cs^ #xF0000) (fx<=? ip^ #xFF))
+                     ;; Default real-mode interrupt handlers. See
+                     ;; enable-interrupt-hooks. TODO: It would be
+                     ;; better to not hardcode this.
+                     (let* ((int-vector ip^)
+                            (result (call-interrupt-handler int-vector)))
+                       (when debug
+                         (print "INT #x" (hex int-vector) " AX=#x" (hex AX^)))
+                       (cond ((memq result '(stop reboot))
+                              result)
+                             (else
+                              (machine-IP-set! M #x100)
+                              (machine-run)))))
+                    (else
+                     ;; If this happened to a real machine it would
+                     ;; need an NMI a reset.
+                     (print "Error: the HLT instruction was executed with IF clear at "
+                            (hex (segment-selector cs^)) ":" (hex ip^))
+                     'stop)))
+                 (else 'hlt)))
+          (else
+           (error 'machine-run "Internal error: unknown abort cause" abort-cause)))))))
