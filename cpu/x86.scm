@@ -160,10 +160,15 @@
             (mutable DS)
             (mutable FS)
             (mutable GS)
-            ;; Control registers
+            ;; System registers
             (mutable CR0)               ;system control flags
             (mutable CR2)               ;linear address of page faults
             (mutable CR3)               ;page table directory pointer
+            (mutable GDTR)              ;global descriptor table
+            (mutable LDTR)              ;local descriptor table
+            (mutable IDTR-base)         ;interrupt descriptor table, base
+            (mutable IDTR-limit)        ;        --""--            , limit
+            (mutable TR)                ;task register
             ;; Other stuff
             (mutable IP)
             (mutable FLAGS)
@@ -182,8 +187,9 @@
             0 0 0 0 0 0 0 0
             ;; Segment registers
             0 0 0 0 0 0
-            ;; Control registers
+            ;; System registers
             control-flags-always-set 0 0
+            0 0 0 #x3FF 0
             ;; Other stuff
             0 (fxior flags-always-set flag-IF) 0
             (make-fallback-int-handlers)
