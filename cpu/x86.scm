@@ -63,6 +63,10 @@
           machine-CR0 machine-CR0-set!
           machine-CR2 machine-CR2-set!
           machine-CR3 machine-CR3-set!
+          machine-GDTR-base machine-GDTR-base-set!
+          machine-GDTR-limit machine-GDTR-limit-set!
+          machine-IDTR-base machine-IDTR-base-set!
+          machine-IDTR-limit machine-IDTR-limit-set!
           machine-IP machine-IP-set!
           machine-FLAGS machine-FLAGS-set!
           machine-CPL
@@ -107,6 +111,10 @@
                            machine-CR0 machine-CR0-set!
                            machine-CR2 machine-CR2-set!
                            machine-CR3 machine-CR3-set!
+                           machine-GDTR-base machine-GDTR-base-set!
+                           machine-GDTR-limit machine-GDTR-limit-set!
+                           machine-IDTR-base machine-IDTR-base-set!
+                           machine-IDTR-limit machine-IDTR-limit-set!
                            machine-CPL
                            machine-exception-cause
                            machine-exception-cause-set!)
@@ -164,10 +172,12 @@
             (mutable CR0)               ;system control flags
             (mutable CR2)               ;linear address of page faults
             (mutable CR3)               ;page table directory pointer
-            (mutable GDTR)              ;global descriptor table
-            (mutable LDTR)              ;local descriptor table
-            (mutable IDTR-base)         ;interrupt descriptor table, base
-            (mutable IDTR-limit)        ;        --""--            , limit
+            (mutable GDTR-base)         ;global descriptor table
+            (mutable GDTR-limit)
+            (mutable LDTR-base)         ;local descriptor table
+            (mutable LDTR-limit)
+            (mutable IDTR-base)         ;interrupt descriptor table
+            (mutable IDTR-limit)
             (mutable TR)                ;task register
             ;; Other stuff
             (mutable IP)
@@ -189,7 +199,7 @@
             0 0 0 0 0 0
             ;; System registers
             control-flags-always-set 0 0
-            0 0 0 #x3FF 0
+            0 0 0 0 0 #x3FF 0
             ;; Other stuff
             0 (fxior flags-always-set flag-IF) 0
             (make-fallback-int-handlers)
@@ -811,13 +821,10 @@
                            (cond ((eqv? mod #b11)
                                   ;; Register reference.
                                   (values ip 'reg r/m))
-                                 ((eqv? eas 16)
-                                  ;; Memory reference.
-                                  (%do-addr16 cs ip mod r/m
-                                              data-segment stack-segment))
                                  (else
-                                  (error 'with-r/m-operand
-                                         "TODO: 32-bit addressing" cs ip eas)))))
+                                  ;; Memory reference.
+                                  (%do-addr cs ip mod r/m
+                                            data-segment stack-segment eas)))))
                body ...)))
 
         ((_ ((ip* store location ModR/M) (cs ip dseg sseg eas))
@@ -826,6 +833,11 @@
              (with-r/m-operand ((ip store location)
                                 (cs ip ModR/M dseg sseg eas))
                body ...))))))
+
+  (define (%do-addr cs ip mod r/m dseg sseg eas)
+    (if (eqv? eas 16)
+        (%do-addr16 cs ip mod r/m dseg sseg)
+        (%do-addr32 cs ip mod r/m dseg sseg)))
 
   (define (%do-addr16 cs ip mod r/m dseg sseg)
     (case mod
@@ -857,6 +869,46 @@
       ((5) (cg+ dseg (cgand #xffff (cg+ disp 'DI))))
       ((6) (cg+ sseg (cgand #xffff (cg+ disp 'BP))))
       ((7) (cg+ dseg (cgand #xffff (cg+ disp 'BX))))))
+
+  (define (SIB-scale byte)
+    (fxbit-field byte 6 8))
+
+  (define (SIB-index byte)
+    (fxbit-field byte 3 6))
+
+  (define (SIB-base byte)
+    (fxbit-field byte 0 3))
+
+  (define (%do-addr32 cs ip mod r/m dseg sseg)
+    (cond ((eqv? r/m #b100)
+           (with-instruction-u8* ((sib <- cs ip))
+             (let* ((scale (SIB-scale sib))
+                    (index (SIB-index sib))
+                    (base (SIB-base sib))
+                    (scale-index-base
+                     (if (eqv? index #b100)
+                         0
+                         (cgasl (vector-ref reg-names index) scale))))
+               (%do-addr32-disp cs ip mod base scale-index-base))))
+          (else
+           (%do-addr32-disp cs ip mod r/m 0))))
+
+  (define (%do-addr32-disp cs ip mod register scale-index-base)
+    (case mod                 ;mod=#b11 is handled in with-r/m-operand
+      ((#b00)
+       (cond ((eqv? (fxand register #b111) #b101)
+              (with-instruction-immediate-sx* ((disp <- cs ip 32))
+                (values ip 'mem (cg+ scale-index-base disp))))
+             (else
+              (values ip 'mem (vector-ref reg-names register)))))
+      ((#b01)
+       (with-instruction-s8* ((disp <- cs ip))
+         (values ip 'mem (cg+ (vector-ref reg-names register)
+                              (cg+ scale-index-base disp)))))
+      ((#b10)
+       (with-instruction-immediate-sx* ((disp <- cs ip 32))
+         (values ip 'mem (cg+ (vector-ref reg-names register)
+                              (cg+ scale-index-base disp)))))))
 
 ;;; Translation: code generation helpers
 
@@ -1950,27 +2002,47 @@
                   ;; TODO: If PE is implemented: #x00 GROUP-6
                   ((#x01)               ; Group 7
                    (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
-                     (case (vector-ref GROUP-7 (ModR/M-reg modr/m))
-                       ((LMSW)          ; lmsw Ew
-                        ;; XXX: LMSW may try to enable protected mode.
-                        ;; It updates the lower 16 bits of CR0.
-                        (if (not first?)
-                            (emit (return merge start-ip))
-                            (emit
-                             `(let ((value ,(cg-r/m-ref store location eos)))
-                                ;; This checks CPL.
-                                ,(cg-load-cr0 'value #xFFFF eos
-                                              continue return merge start-ip ip)))))
-                       ((SMSW)          ; smsw Rv/Mw
-                        (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
-                          (let ((eos (if (eqv? store 'mem) 16 eos)))
-                            (emit
-                             `(let* ((value (machine-CR0 (current-machine)))
-                                     ,@(cgl-r/m-set store location eos 'value))
-                                ,(continue merge ip))))))
-                       ;; TODO: If PE is implemented: SGDT, SIDT, LGDT, LIDT.
-                       (else
-                        (emit (cg-int-invalid-opcode return merge cs start-ip))))))
+                     (let ((operator (vector-ref GROUP-7 (ModR/M-reg modr/m))))
+                       (case operator
+                         ((LMSW)          ; lmsw Ew
+                          ;; XXX: LMSW may try to enable protected mode.
+                          ;; It updates the lower 16 bits of CR0.
+                          (if (not first?)
+                              (emit (return merge start-ip))
+                              (emit
+                               `(let ((value ,(cg-r/m-ref store location eos)))
+                                  ;; This checks CPL.
+                                  ,(cg-load-cr0 'value #xFFFF eos
+                                                continue return merge start-ip ip)))))
+                         ((SMSW)          ; smsw Rv/Mw
+                          (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
+                            (let ((eos (if (eqv? store 'mem) 16 eos)))
+                              (emit
+                               `(let* ((value (machine-CR0 (current-machine)))
+                                       ,@(cgl-r/m-set store location eos 'value))
+                                  ,(continue merge ip))))))
+                         ((LGDT LIDT)     ; lgdt Ms, lidt Ms
+                          (if (eqv? store 'mem)
+                              (emit
+                               `(let* ((addr ,location)
+                                       (limit (RAM addr 16))
+                                       (base (RAM ,(cg+ 'addr 2) 32))
+                                       (base ,(if (eqv? eos 16)
+                                                  (cgand 'base #x00FFFFFF)
+                                                  'base))
+                                       (M (current-machine)))
+                                  ,@(case operator
+                                      ((LGDT)
+                                       `((machine-GDTR-base-set! M base)
+                                         (machine-GDTR-limit-set! M limit)))
+                                      ((LIDT)
+                                       `((machine-IDTR-base-set! M base)
+                                         (machine-IDTR-limit-set! M limit))))
+                                  ,(continue merge ip)))
+                              (emit (cg-int-invalid-opcode return merge cs start-ip))))
+                         ;; TODO: If PE is implemented: SGDT, SIDT, LGDT, LIDT.
+                         (else
+                          (emit (cg-int-invalid-opcode return merge cs start-ip)))))))
                   ;; TODO: If PE is implemented: #x02 lar, #x03 lsl
                   ((#x06)               ; clts
                    ;; Clear the Task Switched flag. Should be OK to
