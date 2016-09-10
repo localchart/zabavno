@@ -3147,27 +3147,25 @@
         (machine-FLAGS-set! M fl^)
         (case abort-cause
           ((HLT)
-           (cond ((eqv? (fxand fl^ flag-IF) 0)
-                  (cond
-                    ((and (eqv? cs^ #xF0000) (fx<=? ip^ #xFF))
-                     ;; Default real-mode interrupt handlers. See
-                     ;; enable-interrupt-hooks. TODO: It would be
-                     ;; better to not hardcode this.
-                     (let* ((int-vector ip^)
-                            (result (call-interrupt-handler int-vector)))
-                       (when debug
-                         (print "INT #x" (hex int-vector) " AX=#x" (hex AX^)))
-                       (cond ((memq result '(stop reboot))
-                              result)
-                             (else
-                              (machine-IP-set! M #x100)
-                              (machine-run)))))
-                    (else
-                     ;; If this happened to a real machine it would
-                     ;; need an NMI a reset.
-                     (print "Error: the HLT instruction was executed with IF clear at "
-                            (hex (segment-selector cs^)) ":" (hex ip^))
-                     'stop)))
+           (cond ((and (eqv? cs^ #xF0000) (fx<=? ip^ #xFF))
+                  ;; Default real-mode interrupt handlers. See
+                  ;; enable-interrupt-hooks. TODO: It would be better
+                  ;; to not hardcode this.
+                  (let* ((int-vector ip^)
+                         (result (call-interrupt-handler int-vector)))
+                    (when debug
+                      (print "INT #x" (hex int-vector) " AX=#x" (hex AX^)))
+                    (cond ((memq result '(stop reboot))
+                           result)
+                          (else
+                           (machine-IP-set! M #x100)
+                           (machine-run)))))
+                 ((eqv? (fxand fl^ flag-IF) 0)
+                  ;; If this happened to a real machine it would need
+                  ;; an NMI or a reset.
+                  (print "Error: the HLT instruction was executed with IF clear at "
+                         (hex (segment-selector cs^)) ":" (hex ip^))
+                  'stop)
                  (else 'hlt)))
           (else
            (error 'machine-run "Internal error: unknown abort cause" abort-cause)))))))

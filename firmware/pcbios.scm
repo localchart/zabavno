@@ -90,7 +90,7 @@
                               (fxarithmetic-shift-left #b10 4)))) ;80x25 color
         (memory-u16-set! (real-pointer #x0040 #x0010) equipment))
       (memory-u16-set! (real-pointer #x0040 #x0013)
-                       (div (* 640 1024) 1024)) ;640kB of low memory
+                       640)        ;640kB of low memory
       ;; Populate the configuration table
       (let ((configuration-table
              '#vu8(#xF8 #x80 0            ;model, submodel, bios revision
