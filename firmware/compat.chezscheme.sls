@@ -26,12 +26,14 @@
 (library (zabavno firmware compat)
   (export input-port-ready?
           get-current-time
-          get-current-date)
+          get-current-date
+          port-length)
   (import (rnrs)
           (only (scheme) input-port-ready?
                 current-time current-date
                 date-year date-month date-day
-                date-hour date-minute date-second date-nanosecond))
+                date-hour date-minute date-second date-nanosecond
+                port-length))
 
   (define (get-current-time)
     (let ((date (current-date))

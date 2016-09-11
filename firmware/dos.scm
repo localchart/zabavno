@@ -30,6 +30,7 @@
   (export dos-setup)
   (import (rnrs (6))
           (zabavno cpu x86)
+          (zabavno firmware compat)
           (only (zabavno firmware pcbios) cp437/control))
 
   (define-record-type dos
@@ -64,23 +65,6 @@
                                                    #f))))
                   '(#x20 #x21 #x29)))
       dos-data))
-
-;;; Helpers
-
-  (define (port-file-size port)
-    ;; XXX: This is the only portable way to do this in R6RS Scheme,
-    ;; unfortunately. Would need compatibility wrappers for a few
-    ;; different schemes.
-    (let ((old-position (port-position port)))
-      (set-port-position! port 0)
-      (let ((bv (make-bytevector 65536)))
-        (let lp ((size 0))
-          (let ((n (get-bytevector-n! port bv 0 (bytevector-length bv))))
-            (cond ((eof-object? n)
-                   (set-port-position! port old-position)
-                   size)
-                  (else
-                   (lp (+ size n)))))))))
 
 ;;; Interrupt handlers
 
@@ -280,7 +264,7 @@
                           (set-port-position! port (+ (port-position port) offset))
                           (clear-CF))
                          (else
-                          (set-port-position! port (+ (port-file-size port) offset))
+                          (set-port-position! port (+ (port-length port) offset))
                           (clear-CF))))))))
            ((#x4C)                      ;terminate with return code
             (exit (bitwise-bit-field (machine-AX M) 0 8)))

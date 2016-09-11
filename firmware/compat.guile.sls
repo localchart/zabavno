@@ -32,14 +32,16 @@
 (library (zabavno firmware compat)
   (export input-port-ready?
           get-current-time
-          get-current-date)
+          get-current-date
+          port-length)
   (import (rnrs)
           (only (srfi srfi-19)
                 current-time current-date
                 date-year date-month date-day
                 date-hour date-minute date-second date-nanosecond)
           (rename (guile)
-                  (char-ready? input-port-ready?)))
+                  (char-ready? input-port-ready?))
+          (only (guile) stat stat:size))
 
   (define (get-current-time)
     (let ((date (current-date))
@@ -54,4 +56,7 @@
     (let ((date (current-date)))
       (values (date-year date)
               (date-month date)
-              (date-day date)))))
+              (date-day date))))
+
+  (define (port-length port)
+    (stat:size (stat port))))

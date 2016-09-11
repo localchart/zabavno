@@ -30,12 +30,18 @@ everything else.
 ## Usage
 
 First you need a Scheme. The recommended Scheme for running Zabavno is
-[Chez Scheme](https://github.com/cisco/chezscheme/), although. any
+[Chez Scheme](https://github.com/cisco/chezscheme/), although any
 [R6RS Scheme](http://www.r6rs.org/) implementation should work.
 
 After having installed a Scheme compiler, clone the repository:
 ```bash
 git clone https://github.com/weinholt/zabavno
+```
+
+Add the `zabavno` directory to your Scheme library path, e.g.:
+
+```bash
+export CHEZSCHEMELIBDIRS=$PWD:$CHEZSCHEMELIBDIRS
 ```
 
 The main program is `programs/zabavno`, which can run DOS .com files,
@@ -48,12 +54,12 @@ interactive programs.
 Arguments to DOS programs are passed using the `--args` command line
 flag, like so:
 ```bash
-zabavno --args " -o test.zip" PKUNZJR.COM
+programs/zabavno --args " -o test.zip" PKUNZJR.COM
 ```
 
 Boot floppies are run like this:
 ```bash
-zabavno fdboot.img 2>/dev/null
+programs/zabavno fdboot.img 2>/dev/null
 ```
 
 (There will be some printouts on stderr about missing BIOS calls and so

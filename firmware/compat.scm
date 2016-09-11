@@ -26,7 +26,8 @@
 (library (zabavno firmware compat)
   (export input-port-ready?
           get-current-time
-          get-current-date)
+          get-current-date
+          port-length)
   (import (rnrs (6)))
 
   (define input-port-ready?
@@ -44,4 +45,40 @@
   (define (get-current-date)
     (values 2016 8 27))
 
-  )
+  (define (port-length port)
+    ;; There is no native procedure for this in R6RS. It should be
+    ;; O(1), and this is O(log n).
+    (define (read! port position bv)
+      (guard (exn
+              (else (eof-object)))
+        (set-port-position! port position)
+        (get-bytevector-n! port bv 0 (bytevector-length bv))))
+    (let ((old-position (port-position port))
+          (bv (make-bytevector (expt 2 12))))
+      (let lp ((position 0) (i 12))
+        ;; Get the upper limit of the next binary search.
+        (let ((n (read! port position bv)))
+          (cond ((eof-object? n)
+                 (if (= position 0)
+                     0
+                     ;; Now do the binary search.
+                     (let lp* ((lower (+ (div position 2) 1))
+                               (upper (- position 1)))
+                       (let ((middle (+ lower (div (- upper lower) 2))))
+                         (let ((n (read! port middle bv)))
+                           (cond ((eof-object? n)
+                                  (lp* lower (- middle 1)))
+                                 ((< n (bytevector-length bv))
+                                  ;; Found the size.
+                                  (set-port-position! port old-position)
+                                  (+ middle n))
+                                 (else
+                                  (lp* (+ middle 1) upper))))))))
+                ((< n (bytevector-length bv))
+                 ;; Found the size.
+                 (set-port-position! port old-position)
+                 (+ position n))
+                ((> position (expt 2 64))
+                 (error 'port-length "Unable to determine port length" port))
+                (else
+                 (lp (expt 2 i) (+ i 1)))))))))

@@ -108,22 +108,10 @@
     ;; Later this image could go to the floppy controller instead.
     (vector-set! (bios-floppy-drives bios-data) drive-index image-port))
 
-;;; Helpers
+  (define (pcbios-load-harddrive-image bios-data drive-index image-port)
+    (vector-set! (bios-disk-drives bios-data) drive-index image-port))
 
-  (define (port-file-size port)
-    ;; XXX: This is the only portable way to do this in R6RS Scheme,
-    ;; unfortunately. Would need compatibility wrappers for a few
-    ;; different schemes.
-    (let ((old-position (port-position port)))
-      (set-port-position! port 0)
-      (let ((bv (make-bytevector 65536)))
-        (let lp ((size 0))
-          (let ((n (get-bytevector-n! port bv 0 (bytevector-length bv))))
-            (cond ((eof-object? n)
-                   (set-port-position! port old-position)
-                   size)
-                  (else
-                   (lp (+ size n)))))))))
+;;; Helpers
 
   ;; Code page 437
   (define cp437 (string #\x2007 #\x263A #\x263B #\x2665 #\x2666 #\x2663
