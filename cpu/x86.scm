@@ -28,8 +28,7 @@
 ;; using the record setters and accessors. The memory of the current
 ;; machine is accessed using the memory-[su]*-{ref,set!} procedures or
 ;; the copy-{to,from}-memory procedures. The machine-run procedure
-;; runs instructions at cs:ip until it encounters an ICEBP
-;; instruction.
+;; runs instructions at cs:ip until it encounters a HLT instruction.
 
 ;; The emulated instructions are translated to Scheme and then
 ;; compiled by eval so the emulator is somewhat snappy.
@@ -666,11 +665,13 @@
                   (hex saved-cs) ":" (hex saved-ip))
            'stop)
           ((6)
-           (print "Error: invalid opcode at "
-                  (hex saved-cs) ":" (hex saved-ip)
-                  ": "  (hex (memory-u8-ref (real-pointer saved-cs saved-ip)))
-                  " " (hex (memory-u8-ref (real-pointer saved-cs (fx+ saved-ip 1))))
-                  " ...: " (disassemble (copy-inst (fx* saved-cs 16) saved-ip)))
+           (print* "Error: invalid opcode at "
+                   (hex saved-cs) ":" (hex saved-ip)
+                   ": "  (hex (memory-u8-ref (real-pointer saved-cs saved-ip)))
+                   " " (hex (memory-u8-ref (real-pointer saved-cs (fx+ saved-ip 1)))))
+           (if disassemble
+               (print " ...: " (disassemble (copy-inst (fx* saved-cs 16) saved-ip)))
+               (print " ..."))
            'stop)
           ((7)
            ;; About "installed": there are x87 emulators for DOS.
@@ -1761,11 +1762,13 @@
 
   (define (cg-int-invalid-opcode return merge cs start-ip)
     (when (machine-debug (current-machine))
-      (print "Warning: translating invalid opcode at "
-             (hex (fxarithmetic-shift-right cs 4)) ":" (hex start-ip)
-             ": " (number->string (memory-u8-ref (+ cs start-ip)) 16)
-             " " (number->string (memory-u8-ref (+ cs (+ start-ip 1))) 16)
-             " ...: " (disassemble (copy-inst cs start-ip))))
+      (print* "Warning: translating invalid opcode at "
+              (hex (fxarithmetic-shift-right cs 4)) ":" (hex start-ip)
+              ": " (number->string (memory-u8-ref (+ cs start-ip)) 16)
+              " " (number->string (memory-u8-ref (+ cs (+ start-ip 1))) 16))
+      (if disassemble
+          (print " ...: " (disassemble (copy-inst cs start-ip)))
+          (print " ...")))
     (%cg-int 6 #f return merge start-ip)) ;#UD
 
   (define (cg-int-device-not-available return merge start-ip)

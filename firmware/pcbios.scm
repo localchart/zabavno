@@ -29,6 +29,7 @@
 (library (zabavno firmware pcbios)
   (export pcbios-setup
           pcbios-load-floppy-image
+          pcbios-load-harddrive-image
           cp437/control)                ;FIXME: Should be cleaned up
   (import (rnrs (6))
           (zabavno cpu x86)
@@ -36,13 +37,31 @@
           #;(weinholt text hexdump))
 
   (define-record-type bios
-    (fields floppy-drives disk-drives
+    (fields drives
             (mutable cursor-column) (mutable cursor-row))
     (protocol
      (lambda (p)
        (lambda ()
-         (p (make-vector 2 #f) (make-vector 24 #f)
+         (p (make-vector 256 #f)
             1 1)))))
+
+  (define-record-type drive
+    (fields port sectors
+            cylinders heads/cylinder sectors/track))
+
+  ;; Converts from CHS format to LBA.
+  (define (drive-chs->lba drive cylinder head sector)
+    (let ((heads/cylinder (drive-heads/cylinder drive))
+          (sectors/track (drive-sectors/track drive)))
+      (fx+ (fx* (fx+ (fx* cylinder heads/cylinder) head) sectors/track)
+           (fx- sector 1))))
+
+  (define (drive-lba->chs drive lba)
+    (let ((heads/cylinder (drive-heads/cylinder drive))
+          (sectors/track (drive-sectors/track drive)))
+      (values (fxdiv lba (fx* heads/cylinder sectors/track))
+              (fxmod (fxdiv lba sectors/track) heads/cylinder)
+              (fx+ (fxmod lba sectors/track) 1))))
 
   (define (print . x)
     (for-each (lambda (x) (display x (current-error-port))) x)
@@ -50,20 +69,6 @@
 
   (define (hex x)
     (number->string x 16))
-
-  ;; Converts from CHS format to LBA, for 1.44 MB floppies.
-  (define (floppy-2880-chs->lba cylinder head sector)
-    (let ((heads/cylinder 2)
-          (sectors/track 18))
-      (fx+ (fx* (fx+ (fx* cylinder heads/cylinder) head) sectors/track)
-           (fx- sector 1))))
-
-  (define (lba->floppy-2880-chs lba)
-    (let ((heads/cylinder 2)
-          (sectors/track 18))
-      (values (fxdiv lba (fx* heads/cylinder sectors/track))
-              (fxmod (fxdiv lba sectors/track) heads/cylinder)
-              (fx+ (fxmod lba sectors/track) 1))))
 
   ;; Prepare the current machine for BIOS calls. Returns an object
   ;; that should be passed to other procedures in this library.
@@ -85,12 +90,14 @@
           (hook! #x19 interrupt-19-bootstrap)
           (hook! #x1A interrupt-1A-time)))
       ;; BIOS data area (BDA)
-      (let ((equipment (fxior (fxarithmetic-shift-left 1 0) ;floppy disk
-                              (fxarithmetic-shift-left 0 1) ;no 387
+      ;; (copy-to-memory (real-pointer #x0040 0)
+      ;;                 (make-bytevector 256 0))
+      (let ((equipment (fxior (fxarithmetic-shift-left 0 1) ;no 387
                               (fxarithmetic-shift-left #b10 4)))) ;80x25 color
         (memory-u16-set! (real-pointer #x0040 #x0010) equipment))
-      (memory-u16-set! (real-pointer #x0040 #x0013)
-                       640)        ;640kB of low memory
+      (memory-u16-set! (real-pointer #x0040 #x0013) 640) ;640kB of low memory
+      (memory-u16-set! (real-pointer #x0040 #x17) 0) ;keyboard shift flags
+      (memory-u8-set! (real-pointer #x0040 #x75) 0) ;hard disks
       ;; Populate the configuration table
       (let ((configuration-table
              '#vu8(#xF8 #x80 0            ;model, submodel, bios revision
@@ -105,11 +112,39 @@
       bios-data))
 
   (define (pcbios-load-floppy-image bios-data drive-index image-port)
-    ;; Later this image could go to the floppy controller instead.
-    (vector-set! (bios-floppy-drives bios-data) drive-index image-port))
+    ;; Update the BDA
+    (let ((old-drive (vector-ref (bios-drives bios-data) drive-index)))
+      (vector-set! (bios-drives bios-data) drive-index
+                   (make-drive image-port
+                               2880
+                               80 2 18))
+      (when (not old-drive)             ;update the BDA
+        (do ((i 0 (fx+ i 1))
+             (drives 0 (if (vector-ref (bios-drives bios-data) i)
+                           (fx+ drives 1)
+                           drives)))
+            ((eqv? i 4)
+             (memory-u16-set! (real-pointer #x0040 #x0010)
+                              (fxior (fxand (memory-u8-ref (real-pointer #x0040 #x0010))
+                                            (fxnot (fxarithmetic-shift-left (fxand -1 #b11) 6)))
+                                     (fxarithmetic-shift-left (fxand (fx- drives 1) #b11) 6)
+                                     (if (eqv? drive-index 0) #b1 0)))))))) ;boot floppy
 
   (define (pcbios-load-harddrive-image bios-data drive-index image-port)
-    (vector-set! (bios-disk-drives bios-data) drive-index image-port))
+    ;; TODO: get good drive parameters
+    (let* ((drive-index (fxior drive-index #x80))
+           (old-drive (vector-ref (bios-drives bios-data) drive-index)))
+      (let* ((sectors (div (port-length image-port) 512))
+             (cylinders 639)
+             (heads/cylinder 4)
+             (sectors/track 26))
+        (vector-set! (bios-drives bios-data) drive-index
+                     (make-drive image-port
+                                 sectors
+                                 cylinders heads/cylinder sectors/track))
+        (when (not old-drive)           ;update the BDA
+          (memory-u8-set! (real-pointer #x0040 #x75)
+                          (fx+ (memory-u8-ref (real-pointer #x0040 #x75)) 1))))))
 
 ;;; Helpers
 
@@ -298,29 +333,26 @@
       ((#x00)                      ;reset disk system
        (clear-CF M))
       ((#x02)                      ;read sectors into memory
-       (let ((sectors (fxand (machine-AX M) #xff))
-             (cylinder (fxior (fxbit-field (machine-CX M) 8 16)
+       (let ((sectors (bitwise-and (machine-AX M) #xff))
+             (cylinder (fxior (bitwise-bit-field (machine-CX M) 8 16)
                               (fxarithmetic-shift-left
-                               (fxbit-field (machine-CX M) 6 8) 6)))
-             (sector (fxbit-field (machine-CX M) 0 6))
-             (head (fxbit-field (machine-DX M) 8 16))
-             (drive (fxbit-field (machine-DX M) 0 7))
-             (disk-drive? (fxbit-set? (machine-DX M) 7))
+                               (bitwise-bit-field (machine-CX M) 6 8) 6)))
+             (sector (bitwise-bit-field (machine-CX M) 0 6))
+             (head (bitwise-bit-field (machine-DX M) 8 16))
+             (drive-idx (bitwise-bit-field (machine-DX M) 0 8))
              (buffer-seg (machine-ES M))
              (buffer-off (machine-BX M)))
          (when (machine-debug M)
            (print "pcbios: read " sectors " sectors from " (list cylinder head sector)
-                  " on drive " drive " to " (hex buffer-seg) ":" (hex buffer-off)))
+                  " on drive #x" (hex drive-idx) " to " (hex buffer-seg) ":" (hex buffer-off)))
          (cond
            ((zero? sectors)
             (set-CF M))
-           ((and (not disk-drive?)
-                 (fx<? drive (vector-length (bios-floppy-drives bios-data)))
-                 (vector-ref (bios-floppy-drives bios-data) drive))
-            => (lambda (image-port)
-                 (let ((lba (floppy-2880-chs->lba cylinder head sector)))
-                   (set-port-position! image-port (fx* lba 512))
-                   (let ((blocks (get-bytevector-n image-port (fx* sectors 512))))
+           ((vector-ref (bios-drives bios-data) drive-idx)
+            => (lambda (drive)
+                 (let ((lba (drive-chs->lba drive cylinder head sector)))
+                   (set-port-position! (drive-port drive) (* lba 512))
+                   (let ((blocks (get-bytevector-n (drive-port drive) (fx* sectors 512))))
                      (define (set-status status sectors-read)
                        (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xFFFF))
                                                  (fxarithmetic-shift-left status 8)
@@ -328,8 +360,9 @@
                                                      (fxdiv (bytevector-length blocks) 512)
                                                      0))))
                      (cond ((or (eof-object? blocks) (fx<? (bytevector-length blocks) 512))
-                            (print "pcbios: disk read error from c=" cylinder
-                                   ", h=" head ", s=" sector ", lba=" lba)
+                            (print "pcbios: disk read error from drive=#x" (hex drive-idx)
+                                   " c=" cylinder ", h=" head ", s=" sector
+                                   ", lba=" lba ", sectors=" sectors)
                             (set-CF M)
                             (set-status #x04 0)) ;04 = sector not found/read error
                            (else
@@ -340,47 +373,56 @@
            (else
             (set-CF M)))))
       ((#x08)                      ;get drive parameters
-       (let ((drive (fxbit-field (machine-DX M) 0 7))
-             (disk-drive? (fxbit-set? (machine-DX M) 7)))
+       (let ((drive-index (bitwise-bit-field (machine-DX M) 0 8)))
          (cond
-           ((or disk-drive? (> drive 0))
-            (set-CF M))
+           ((vector-ref (bios-drives bios-data) drive-index)
+            => (lambda (drive)
+                 (let ((drive-type (if (fx<? drive-index #x80) #x04 #x00)) ;1.44MB
+                       (maximum-cylinder-number (drive-cylinders drive))
+                       (maximum-sector-number (drive-sectors/track drive))
+                       (maximum-head-number (fx- (drive-heads/cylinder drive) 1))
+                       (number-of-drives ;drives of the same type as asked about
+                        (do ((i 0 (fx+ i 1))
+                             (drives 0 (if (vector-ref (bios-drives bios-data)
+                                                       (fxior i (fxand drive-index #x80)))
+                                           (fx+ drives 1)
+                                           drives)))
+                            ((eqv? i 128) drives))))
+                   (let ((ax 0)
+                         (bx drive-type)
+                         (cx (fxior
+                              (fxarithmetic-shift-left (fxbit-field maximum-cylinder-number 0 8) 8)
+                              (fxarithmetic-shift-left (fxbit-field maximum-cylinder-number 8 10) 6)
+                              (fxbit-field maximum-sector-number 0 6)))
+                         (dx (fxior
+                              (fxarithmetic-shift-left maximum-head-number 8)
+                              number-of-drives))
+                         ;; TODO: floppy drive parameter table
+                         (es #x0000) (di #x0000))
+                     (machine-AX-set! M ax)
+                     (machine-BX-set! M bx)
+                     (machine-CX-set! M cx)
+                     (machine-DX-set! M dx)
+                     (machine-ES-set! M es)
+                     (machine-DI-set! M di)
+                     (clear-CF M)))))
            (else
-            (let ((drive-type #x04) ;1.44M
-                  (maximum-cylinder-number 80)
-                  (maximum-sector-number 18)
-                  (maximum-head-number 1)
-                  (number-of-drives 1))
-              (let ((ax 0)
-                    (bx drive-type)
-                    (cx (fxior
-                         (fxarithmetic-shift-left (fxbit-field maximum-cylinder-number 0 8) 8)
-                         (fxarithmetic-shift-left (fxbit-field maximum-cylinder-number 8 10) 6)
-                         (fxbit-field maximum-sector-number 0 6)))
-                    (dx (fxior
-                         (fxarithmetic-shift-left maximum-head-number 8)
-                         number-of-drives))
-                    ;; TODO: drive parameter table
-                    (es #xF000)
-                    (di #x0100))
-                (machine-AX-set! M ax)
-                (machine-BX-set! M bx)
-                (machine-CX-set! M cx)
-                (machine-DX-set! M dx)
-                (machine-ES-set! M es)
-                (machine-DI-set! M di)
-                (clear-CF M)))))))
+            (set-CF M)))))
       ((#x15)                      ;get disk type
-       (let ((drive (fxbit-field (machine-DX M) 0 7))
-             (disk-drive? (fxbit-set? (machine-DX M) 7)))
-         (let ((type (if (or disk-drive? (> drive 0))
-                         #x00      ; no such drive
-                         #x01)))   ; floppy without change-line support
-           (machine-AX-set! M (fxior type
-                                     (bitwise-and (machine-AX M)
-                                                  (fxnot #xFFFF))))
+       (let* ((drive-idx (bitwise-bit-field (machine-DX M) 0 8))
+              (drive (vector-ref (bios-drives bios-data) drive-idx)))
+         (let ((sectors (if drive (drive-sectors drive) 0))
+               (type (cond ((not drive) #x00) ;no such drive
+                           ((fx>=? drive-idx #x80) #x03) ;hard disk
+                           (else #x01)))) ;floppy without change-line support
+           (machine-AX-set! M type)
+           (when (eqv? type #x03)
+             (machine-CX-set! M (bitwise-bit-field sectors 16 32))
+             (machine-DX-set! M (bitwise-bit-field sectors 0 16)))
            (clear-CF M))))
       (else
+       (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xff))
+                                 #x01)) ;invalid function
        (set-CF M)
        (chain M vec))))
 

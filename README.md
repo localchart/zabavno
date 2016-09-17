@@ -44,26 +44,29 @@ Add the `zabavno` directory to your Scheme library path, e.g.:
 export CHEZSCHEMELIBDIRS=$PWD:$CHEZSCHEMELIBDIRS
 ```
 
-The main program is `programs/zabavno`, which can run DOS .com files,
-DOS .exe files and bootable PC floppy images. These are not provided
-in the repository and will need to be found elsewhere. You might like
-to try the [FreeDOS 1.0 floppy](http://www.freedos.org/download/). The
-keyboard is not working reliably right now so it will be tricky to use
-interactive programs.
+### Booting disk images
 
-Arguments to DOS programs are passed using the `--args` command line
-flag, like so:
-```bash
-programs/zabavno --args " -o test.zip" PKUNZJR.COM
-```
+The program for machine emulation is `programs/zabavno`.
 
 Boot floppies are run like this:
 ```bash
-programs/zabavno fdboot.img 2>/dev/null
+programs/zabavno -fda fdboot.img 2>/dev/null
 ```
+
+If you don't already have something to test with, you might like to
+try the [FreeDOS 1.0 floppy](http://www.freedos.org/download/).
 
 (There will be some printouts on stderr about missing BIOS calls and so
 on, so you might want to redirect them to `/dev/null`).
+
+### Running DOS program
+
+Some DOS programs can be run directly using the DOS emulation library.
+
+Arguments to DOS programs are passed on the command line:
+```bash
+programs/zabavno-dos PKUNZJR.COM -o test.zip
+```
 
 ## Future plans
 

@@ -36,9 +36,8 @@
 
   ;; Loads a boot sector (e.g. a floppy boot sector or MBR) into the
   ;; current machine.
-  (define (load-boot-sector image-port)
-    (let ((M (current-machine))
-          (floppy? #t))
+  (define (load-boot-sector image-port floppy?)
+    (let ((M (current-machine)))
       ;; Start running code at 0000:7C00.
       (machine-CS-set! M #x0000)
       (machine-IP-set! M #x7C00)

@@ -24,64 +24,62 @@
 
 (import (rnrs (6))
         (zabavno cpu x86)
-        (zabavno firmware dos)
         (zabavno firmware pcbios)
-        (zabavno loader pcboot)
-        (zabavno loader dos))
-
-(define (main filename program-args enable-debug enable-trace)
-  (let ((M (make-machine)))
-    (with-machine M
-      (lambda ()
-        (machine-debug-set! M enable-debug)
-        (machine-trace-set! M enable-trace)
-        (call-with-port (open-file-input-port filename)
-          (lambda (p)
-            (enable-interrupt-hooks)
-            (let ((bios-data (pcbios-setup)))
-              (cond ((detect-boot-sector p)
-                     (load-boot-sector p)
-                     (pcbios-load-floppy-image bios-data 0 p)) ;drive A
-                    ((detect-dos-exe-image p)
-                     (dos-setup)
-                     (load-dos-exe-image p program-args))
-                    (else
-                     (dos-setup)
-                     (load-dos-com-image p program-args)))
-              (let lp ()
-                (case (machine-run)
-                  ((stop) #f)
-                  ((hlt) (lp))          ;wait for external interrupts
-                  ((reboot)
-                   (main filename program-args enable-debug enable-trace))
-                  (else (lp)))))))))))
+        (zabavno loader pcboot))
 
 (define (help)
-  (display "The zabavno machine emulator test program\n\
-Usage: zabavno [--debug] [--trace] [--args <program-args...>] <program-image>\n\
-The image may be a DOS .com file, DOS .exe file or a bootable PC floppy image.\n"
+  (display "The zabavno machine emulator\n\
+Usage: zabavno [--debug] [--trace] [-fda floppy.img] [-hda disk.img]\n\
+\n"
            (current-error-port))
   (exit 1))
 
-;; Handle command line arguments.
-(let lp ((parameters (cdr (command-line)))
-         (filename #f)
-         (program-args "")
-         (enable-debug #f)
-         (enable-trace #f))
-  (cond ((null? parameters)
-         (when (not filename)
-           (help))
-         (main filename program-args enable-debug enable-trace))
-        ((equal? (car parameters) "--debug")
-         (lp (cdr parameters) filename program-args #t enable-trace))
-        ((equal? (car parameters) "--trace")
-         (lp (cdr parameters) filename program-args enable-debug #t))
-        ((equal? (car parameters) "--args")
-         (when (null? (cdr parameters))
-           (help))
-         (lp (cddr parameters) filename (cadr parameters) enable-debug enable-trace))
-        ((not filename)
-         (lp (cdr parameters) (car parameters) program-args enable-debug enable-trace))
-        (else
-         (help))))
+(define (parse-command-line! M bios-data command-line)
+  (let lp ((arg* (cdr command-line)))
+    (unless (null? arg*)
+      (let ((arg (car arg*)))
+        (cond
+          ((string=? arg "--debug")
+           (machine-debug-set! M #t)
+           (lp (cdr arg*)))
+          ((string=? arg "--trace")
+           (machine-trace-set! M #t)
+           (lp (cdr arg*)))
+          ((string=? arg "-fda")
+           (when (null? (cdr arg*)) (help))
+           (let ((p (open-file-input-port (cadr arg*))))
+             (load-boot-sector p 'floppy)
+             (pcbios-load-floppy-image bios-data 0 p)
+             (lp (cddr arg*))))
+          ((string=? arg "-fdb")
+           (when (null? (cdr arg*)) (help))
+           (let ((p (open-file-input-port (cadr arg*))))
+             (pcbios-load-floppy-image bios-data 1 p)
+             (lp (cddr arg*))))
+          ((string=? arg "-hda")
+           (when (null? (cdr arg*)) (help))
+           (let ((p (open-file-input-port (cadr arg*))))
+             (load-boot-sector p #f)
+             (pcbios-load-harddrive-image bios-data 0 p)
+             (lp (cddr arg*))))
+          (else
+           (help)))))))
+
+(define (main command-line)
+  (let ((M (make-machine)))
+    (with-machine M
+      (lambda ()
+        (enable-interrupt-hooks)
+        (let ((bios-data (pcbios-setup)))
+          ;; Handle command line arguments.
+          (parse-command-line! M bios-data command-line)
+          ;; Run.
+          (let lp ()
+            (case (machine-run)
+              ((stop) #f)
+              ((hlt) (lp))          ;wait for external interrupts
+              ((reboot)
+               (main command-line))
+              (else (lp)))))))))
+
+(main (command-line))
