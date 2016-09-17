@@ -2328,16 +2328,20 @@
                              (continue merge ip)))))
              ((#x61)                    ; popaw / popad
               (emit
-               (cg-pop* eos 'DI^ 'SI^ 'BP^ 'SP^ 'BX^ 'DX^ 'CX^ 'AX^
-                        `(let* (,@(cgl-register-update idx-AX eos 'AX^)
-                                ,@(cgl-register-update idx-CX eos 'CX^)
-                                ,@(cgl-register-update idx-DX eos 'DX^)
-                                ,@(cgl-register-update idx-BX eos 'BX^)
-                                ,@(cgl-register-update idx-SP eos 'SP^)
-                                ,@(cgl-register-update idx-BP eos 'BP^)
-                                ,@(cgl-register-update idx-SI eos 'SI^)
-                                ,@(cgl-register-update idx-DI eos 'DI^))
-                           ,(continue merge ip)))))
+               (cg-pop* eos 'DI^ 'SI^ 'BP^
+                        `(let* (,@(cgl-register-update idx-SP eos
+                                                       ;; SP is not restored
+                                                       (cg+ (cg-register-ref idx-SP eos)
+                                                            (div eos 8))))
+                           ,(cg-pop* eos 'BX^ 'DX^ 'CX^ 'AX^
+                                     `(let* (,@(cgl-register-update idx-AX eos 'AX^)
+                                             ,@(cgl-register-update idx-CX eos 'CX^)
+                                             ,@(cgl-register-update idx-DX eos 'DX^)
+                                             ,@(cgl-register-update idx-BX eos 'BX^)
+                                             ,@(cgl-register-update idx-BP eos 'BP^)
+                                             ,@(cgl-register-update idx-SI eos 'SI^)
+                                             ,@(cgl-register-update idx-DI eos 'DI^))
+                                        ,(continue merge ip)))))))
              ((#x62)                    ; bound Gv, Ma
               (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                 (if (eq? store 'mem)
