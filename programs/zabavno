@@ -24,6 +24,7 @@
 
 (import (rnrs (6))
         (zabavno cpu x86)
+        (prefix (zabavno hardware ich8) ich8:)
         (zabavno firmware pcbios)
         (zabavno loader pcboot))
 
@@ -77,6 +78,7 @@ Usage: zabavno [--debug] [--trace] [-fda floppy.img] [-hda disk.img]\n\
   (let ((M (make-machine)))
     (with-machine M
       (lambda ()
+        (ich8:init)
         (enable-interrupt-hooks)
         (let ((bios-data (pcbios-setup)))
           ;; Handle command line arguments.

@@ -73,6 +73,7 @@
           memory-u8-ref memory-u16-ref memory-u32-ref
           memory-s8-ref memory-s16-ref memory-s32-ref
           memory-u8-set! memory-u16-set! memory-u32-set!
+          machine-A20-gate-control
           port-write port-read
           machine-hook-4k-page!
           machine-hook-i/o-port!
@@ -218,19 +219,23 @@
 
   (define (with-machine M thunk)
     (let ((old-machine #f)
-          (old-RAM #f))
+          (old-RAM #f)
+          (old-mask #f))
       (dynamic-wind
         (lambda ()
           (set! old-machine *current-machine*)
           (set! old-RAM RAM)
+          (set! old-mask memory-mask)
           (set! *current-machine* M)
           (set! RAM (machine-RAM M)))
         thunk
         (lambda ()
           (set! *current-machine* old-machine)
+          (set! memory-mask old-mask)
           (set! RAM old-RAM)
           (set! old-machine #f)
-          (set! old-RAM #f)))))
+          (set! old-RAM #f)
+          (set! old-mask #f)))))
 
   (define (current-machine)
     *current-machine*)
@@ -475,11 +480,29 @@
          (memory-u8-set! (fx+ addr i)
                          (bytevector-u8-ref bv (fx+ start i)))))))
 
+  ;; Memory size is fixed for now.
+  (define memory-size (* 2 1024 1024))
+
   (define (make-empty-memory)
-    (make-vector (/ (* 1024 1024) page-size) #f))
+    (make-vector (/ memory-size page-size) #f))
+
+  (define memory-mask-A20-disabled (fxxor (fx- memory-size 1)
+                                          (fxasl 1 20)))
+  (define memory-mask-A20-enabled (fx- memory-size 1))
+  (define memory-mask memory-mask-A20-disabled)
+
+  ;; Control the A20 gate.
+  (define machine-A20-gate-control
+    (case-lambda
+      (()
+       (fx=? memory-mask memory-mask-A20-enabled))
+      ((enable)
+       (if enable
+           (set! memory-mask memory-mask-A20-enabled)
+           (set! memory-mask memory-mask-A20-disabled)))))
 
   (define (RAM-page addr)
-    (fxarithmetic-shift-right (fxand addr #xFFFFF) page-bits))
+    (fxarithmetic-shift-right (fwand addr memory-mask) page-bits))
 
   (define (RAM-page-offset addr)
     (fxand addr (fx- page-size 1)))

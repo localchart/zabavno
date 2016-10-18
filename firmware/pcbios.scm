@@ -103,8 +103,8 @@
       ;;                 (make-bytevector 256 0))
       (let ((equipment (fxior (fxarithmetic-shift-left 0 1) ;no 387
                               (fxarithmetic-shift-left #b10 4)))) ;80x25 color
-        (memory-u16-set! (real-pointer #x0040 #x0010) equipment))
-      (memory-u16-set! (real-pointer #x0040 #x0013) 640) ;640kB of low memory
+        (memory-u16-set! (real-pointer #x0040 #x10) equipment))
+      (memory-u16-set! (real-pointer #x0040 #x13) 640) ;640kB of low memory
       (memory-u16-set! (real-pointer #x0040 #x17) 0) ;keyboard shift flags
       (memory-u16-set! (real-pointer #x0040 #x50) #x0000) ;cursor position table
       (memory-u8-set! (real-pointer #x0040 #x62) 0) ;video page number
@@ -118,7 +118,7 @@
       (memory-u8-set! (real-pointer #x0040 #x84) 24) ;rows on screen - 1
       ;; Populate the configuration table
       (let ((configuration-table
-             '#vu8(#xF8 #x80 0            ;model, submodel, bios revision
+             '#vu8(#xFC #x09 0            ;model, submodel, bios revision
                         #b01100000        ;second 8259, RTC
                         #b00000000
                         #b00000000
@@ -571,6 +571,37 @@
 
   (define (interrupt-15-memory M bios-data vec chain)
     (case (get-AH M)
+      ((#x24)
+       (case (bitwise-and (machine-AX M) #xFFFF)
+         ((#x2400)                      ; disable A20 gate
+          (when (machine-debug M)
+            (print "pcbios: disable A20 gate"))
+          (machine-A20-gate-control #f)
+          (machine-AX-set! M (bitwise-and (machine-AX M) (fxnot #xff00)))
+          (clear-CF M))
+         ((#x2401)                      ; enable A20 gate
+          (when (machine-debug M)
+            (print "pcbios: enable A20 gate"))
+          (machine-A20-gate-control #t)
+          (machine-AX-set! M (bitwise-and (machine-AX M) (fxnot #xff00)))
+          (clear-CF M))
+         ((#x2402)                      ; get A20 gate status
+          (let ((status (if (machine-A20-gate-control) 1 0)))
+            (when (machine-debug M)
+              (print "pcbios: get A20 gate status => " status))
+            (machine-AX-set! M (bitwise-ior status
+                                            (bitwise-and (machine-AX M) (fxnot #xffff))))
+            (clear-CF M)))
+         ((#x2403)                      ; query A20 gate support
+          (let ((status #b10))          ; port 92h support (zabavno hardware ich8)
+            (when (machine-debug M)
+              (print "pcbios: query A20 gate support => " status))
+            (machine-AX-set! M (bitwise-and (machine-AX M) (fxnot #xff00)))
+            (machine-BX-set! M (bitwise-ior (fxarithmetic-shift-left status 8)
+                                            (bitwise-and (machine-BX M) (fxnot #xff00))))
+            (clear-CF M)))
+         (else
+          (chain M vec))))
       ((#x41)                           ; wait on external event
        (set-CF M)
        (machine-AX-set! M (bitwise-ior #x8600  ;unsupported function
@@ -680,7 +711,7 @@
            (machine-AX-set! M (bitwise-ior midnight-counter
                                            (bitwise-and (machine-AX M)
                                                         (fxnot #xFF))))
-           (memory-u32-set! (real-pointer #x40 #x6C) clock-ticks)
+           (memory-u32-set! (real-pointer #x0040 #x6C) clock-ticks)
            (clear-CF M))))
       ((#x02)                    ;get rtc time
        (let-values (((hour minute second _nanosecond dst?) (get-current-time)))
