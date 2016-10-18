@@ -721,6 +721,8 @@
   ;; which is usually bad idea, but is handled specially by
   ;; machine-run.
   (define (enable-interrupt-hooks)
+    (copy-to-memory (real-pointer #xF000 #x0000)
+                    (make-bytevector 1024 0))
     (do ((seg #xF000)
          (int 0 (fx+ int 1)))
         ((fx=? int 256)

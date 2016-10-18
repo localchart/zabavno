@@ -97,7 +97,16 @@
         (memory-u16-set! (real-pointer #x0040 #x0010) equipment))
       (memory-u16-set! (real-pointer #x0040 #x0013) 640) ;640kB of low memory
       (memory-u16-set! (real-pointer #x0040 #x17) 0) ;keyboard shift flags
+      (memory-u16-set! (real-pointer #x0040 #x50) #x0000) ;cursor position table
+      (memory-u8-set! (real-pointer #x0040 #x62) 0) ;video page number
       (memory-u8-set! (real-pointer #x0040 #x75) 0) ;hard disks
+      (memory-u8-set! (real-pointer #x0040 #x96) ;keyboard status byte 1
+                      (fxarithmetic-shift-left 1 4)) ;enhanced keyboard
+      (memory-u8-set! (real-pointer #x0040 #x97) ;keyboard status byte 2
+                      0)
+      (memory-u16-set! (real-pointer #x0040 #x4A) 80) ;columns on screen
+      (memory-u8-set! (real-pointer #x0040 #x71) 0) ;bit 7 set on ctrl-break
+      (memory-u8-set! (real-pointer #x0040 #x84) 24) ;rows on screen - 1
       ;; Populate the configuration table
       (let ((configuration-table
              '#vu8(#xF8 #x80 0            ;model, submodel, bios revision
@@ -109,6 +118,18 @@
         (memory-u16-set! (real-pointer #xF000 #xE6F5)
                          (bytevector-length configuration-table))
         (copy-to-memory (real-pointer #xF000 (+ #xE6F5 2)) configuration-table))
+      ;; Dummy interrupt handler
+      (memory-u8-set! (real-pointer #xF000 #xFF53) #xC9) ;iret
+      ;; Print screen service entry point
+      (memory-u8-set! (real-pointer #xF000 #xFF54) #xC9) ;iret
+      ;; Reset jump
+      (memory-u8-set! (real-pointer #xF000 #xFFF0) #xEA) ;jmpf (far #xf000 #x19)
+      (memory-u16-set! (real-pointer #xF000 #xFFF1) #x0019)
+      (memory-u16-set! (real-pointer #xF000 #xFFF3) #xF000)
+      ;; ASCII BIOS date
+      (copy-to-memory (real-pointer #xF000 #xFFF5) (string->utf8 "16/10/18"))
+      ;; System model ID. F8 is an 80386.
+      (memory-u8-set! (real-pointer #xF000 #xFFFE) #xF8)
       bios-data))
 
   (define (pcbios-load-floppy-image bios-data drive-index image-port)
@@ -377,6 +398,8 @@
          (cond
            ((vector-ref (bios-drives bios-data) drive-index)
             => (lambda (drive)
+                 (when (machine-debug M)
+                   (print "pcbios: get drive parameters " (hex drive-index) " => " drive))
                  (let ((drive-type (if (fx<? drive-index #x80) #x04 #x00)) ;1.44MB
                        (maximum-cylinder-number (drive-cylinders drive))
                        (maximum-sector-number (drive-sectors/track drive))
@@ -396,21 +419,22 @@
                               (fxbit-field maximum-sector-number 0 6)))
                          (dx (fxior
                               (fxarithmetic-shift-left maximum-head-number 8)
-                              number-of-drives))
-                         ;; TODO: floppy drive parameter table
-                         (es #x0000) (di #x0000))
-                     (machine-AX-set! M ax)
-                     (machine-BX-set! M bx)
-                     (machine-CX-set! M cx)
-                     (machine-DX-set! M dx)
-                     (machine-ES-set! M es)
-                     (machine-DI-set! M di)
+                              number-of-drives)))
+                     ;; XXX: RBIL says to set ES:DI, but that crashes MS-DOS.
+                     (machine-AX-set! M (bitwise-ior ax (bitwise-and (machine-AX M) (bitwise-not #xffff))))
+                     (machine-BX-set! M (bitwise-ior bx (bitwise-and (machine-BX M) (bitwise-not #xffff))))
+                     (machine-CX-set! M (bitwise-ior cx (bitwise-and (machine-CX M) (bitwise-not #xffff))))
+                     (machine-DX-set! M (bitwise-ior dx (bitwise-and (machine-DX M) (bitwise-not #xffff))))
                      (clear-CF M)))))
            (else
+            (when (machine-debug M)
+              (print "pcbios: get drive parameters with invalid drive " (hex drive-index)))
             (set-CF M)))))
       ((#x15)                      ;get disk type
        (let* ((drive-idx (bitwise-bit-field (machine-DX M) 0 8))
               (drive (vector-ref (bios-drives bios-data) drive-idx)))
+         (when (machine-debug M)
+           (print "pcbios: get disk type " (hex drive-idx) " => " drive))
          (let ((sectors (if drive (drive-sectors drive) 0))
                (type (cond ((not drive) #x00) ;no such drive
                            ((fx>=? drive-idx #x80) #x03) ;hard disk
@@ -441,10 +465,36 @@
 
   (define (interrupt-15-memory M bios-data vec chain)
     (case (get-AH M)
+      ((#x41)                           ; wait on external event
+       (set-CF M)
+       (machine-AX-set! M (bitwise-ior #x8600  ;unsupported function
+                                       (bitwise-and (machine-AX M) (fxnot #xff00)))))
+      ((#x87)                           ; copy extended memory
+       (let* ((table-addr (real-pointer (machine-ES M)
+                                        (bitwise-and (machine-SI M) #xffff)))
+              (words (bitwise-and (machine-CX M) #xFFFF))
+              (source
+               (bitwise-ior
+                (memory-u16-ref (+ table-addr #x12))
+                (bitwise-arithmetic-shift-left (memory-u8-ref (+ table-addr #x14)) 16)
+                (bitwise-arithmetic-shift-left (memory-u8-ref (+ table-addr #x17)) 24)))
+              (target
+               (bitwise-ior
+                (memory-u16-ref (+ table-addr #x1A))
+                (bitwise-arithmetic-shift-left (memory-u8-ref (+ table-addr #x1C)) 16)
+                (bitwise-arithmetic-shift-left (memory-u8-ref (+ table-addr #x1F)) 24))))
+         (when (machine-debug M)
+           (print "pcbios: copy #x" (hex words) " words from #x" (hex source) " to #x"
+                  (hex target)))
+         (copy-to-memory target (copy-from-memory source (* words 2)))
+         (machine-AX-set! M (bitwise-and (machine-AX M) (fxnot #xff00)))
+         (clear-CF M)))
       ((#x88)                           ; get extended memory size
-       (machine-AX-set! M (bitwise-ior (bitwise-and (machine-AX M) (bitwise-not #xffff))
-                                       (bitwise-and (div (- (machine-memory-size M) #x100000) 1024)
-                                                    #xffff)))
+       (machine-AX-set! M (bitwise-ior
+                           (bitwise-and (machine-AX M) (bitwise-not #xffff))
+                           (bitwise-and (min (div (- (machine-memory-size M) #x100000) 1024)
+                                             #xffc0) ;max 63MB
+                                        #xffff)))
        (clear-CF M))
       ((#xC0)                           ; get configuration
        (machine-ES-set! M #xF000)
