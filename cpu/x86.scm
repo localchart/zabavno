@@ -423,6 +423,15 @@
         ((_ . x*)
          #f))))
 
+  (define-syntax when-uninit-trace
+    (lambda (x)
+      (syntax-case x ()
+        #;
+        ((_ . x*)
+         #'(begin . x*))
+        ((_ . x*)
+         #f))))
+
   ;; Instead of using a big bytevector for the RAM, it is split into
   ;; pages that are referenced from a vector.
   (define page-bits 12)
@@ -488,7 +497,12 @@
                       " with " procedure))))
       (vector-set! RAM page procedure)))
 
+  (define %uninit% (when-uninit-trace (make-eqv-hashtable)))
+
   (define (memory-u8-ref addr)
+    (when-uninit-trace
+     (unless (hashtable-ref %uninit% addr #f)
+       (print "Warning: uninitialized memory-u8-ref at " (hex addr))))
     (let ((x (cond ((vector-ref RAM (RAM-page addr)) =>
                     (lambda (page)
                       (if (bytevector? page)
@@ -499,6 +513,10 @@
       x))
 
   (define (memory-u16-ref addr)
+    (when-uninit-trace
+     (unless (and (hashtable-ref %uninit% addr #F)
+                  (hashtable-ref %uninit% (fx+ addr 1) #F))
+       (print "Warning: uninitialized memory-u16-ref at " (hex addr))))
     (let ((x (cond ((fxzero? (fxand addr #b1))
                     (cond ((vector-ref RAM (RAM-page addr)) =>
                            (lambda (page)
@@ -513,6 +531,12 @@
       x))
 
   (define (memory-u32-ref addr)
+    (when-uninit-trace
+     (unless (and (hashtable-ref %uninit% addr #F)
+                  (hashtable-ref %uninit% (fx+ addr 1) #F)
+                  (hashtable-ref %uninit% (fx+ addr 2) #F)
+                  (hashtable-ref %uninit% (fx+ addr 3) #F))
+       (print "Warning: uninitialized memory-u32-ref at " (hex addr))))
     (let ((x (cond ((fxzero? (fxand addr #b11))
                     (cond ((vector-ref RAM (RAM-page addr)) =>
                            (lambda (page)
@@ -538,6 +562,8 @@
     (sign-extend (memory-u32-ref addr) 32))
 
   (define (memory-u8-set! addr value)
+    (when-uninit-trace
+     (hashtable-set! %uninit% addr #t))
     (mtrace "memory-u8-set!: #x" (hex addr) " #x" (hex value))
     (cond ((vector-ref RAM (RAM-page addr)) =>
            (lambda (page)
@@ -552,6 +578,9 @@
              (bytevector-u8-set! page (RAM-page-offset addr) value)))))
 
   (define (memory-u16-set! addr value)
+    (when-uninit-trace
+     (hashtable-set! %uninit% addr #t)
+     (hashtable-set! %uninit% (fx+ addr 1) #t))
     (mtrace "memory-u16-set!: #x" (hex addr) " #x" (hex value))
     (cond ((fxzero? (fxand addr #b1))
            (cond ((vector-ref RAM (RAM-page addr)) =>
@@ -570,6 +599,11 @@
            (memory-u8-set! (fx+ addr 1) (fxasr value 8)))))
 
   (define (memory-u32-set! addr value)
+    (when-uninit-trace
+     (hashtable-set! %uninit% addr #t)
+     (hashtable-set! %uninit% (fx+ addr 1) #t)
+     (hashtable-set! %uninit% (fx+ addr 2) #t)
+     (hashtable-set! %uninit% (fx+ addr 3) #t))
     (mtrace "memory-u32-set!: #x" (hex addr) " #x" (hex value))
     (cond ((fxzero? (fxand addr #b11))
            (cond ((vector-ref RAM (RAM-page addr)) =>
