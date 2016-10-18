@@ -1516,7 +1516,7 @@
                                   ,flag-OF)
                                  (else 0))))
          (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
-                               (if ,(cgbit-set? 't0 (fx- t1 1))
+                               (if ,(cgbit-set? 't0 (cg- t1 1))
                                    ,flag-CF
                                    0))))))
 
