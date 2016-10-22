@@ -2062,12 +2062,11 @@
                                   ,(cg-load-cr0 'value #xFFFF eos
                                                 continue return merge start-ip ip)))))
                          ((SMSW)          ; smsw Rv/Mw
-                          (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
-                            (let ((eos (if (eqv? store 'mem) 16 eos)))
-                              (emit
-                               `(let* ((value (machine-CR0 (current-machine)))
-                                       ,@(cgl-r/m-set store location eos 'value))
-                                  ,(continue merge ip))))))
+                          (let ((eos (if (eqv? store 'mem) 16 eos)))
+                            (emit
+                             `(let* ((value (machine-CR0 (current-machine)))
+                                     ,@(cgl-r/m-set store location eos 'value))
+                                ,(continue merge ip)))))
                          ((LGDT LIDT)     ; lgdt Ms, lidt Ms
                           (if (eqv? store 'mem)
                               (emit
