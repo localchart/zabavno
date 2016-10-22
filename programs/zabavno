@@ -34,6 +34,14 @@ Usage: zabavno [--debug] [--trace] [-fda floppy.img] [-hda disk.img]\n\
            (current-error-port))
   (exit 1))
 
+(define (open-file-image-port filename)
+  (guard (exn
+          ((i/o-file-protection-error? exn)
+           ;; Try it read-only.
+           (open-file-input-port filename)))
+    (open-file-input/output-port filename
+                                 (file-options no-create no-fail no-truncate))))
+
 (define (parse-command-line! M bios-data command-line)
   (let lp ((arg* (cdr command-line)))
     (unless (null? arg*)
@@ -47,18 +55,18 @@ Usage: zabavno [--debug] [--trace] [-fda floppy.img] [-hda disk.img]\n\
            (lp (cdr arg*)))
           ((string=? arg "-fda")
            (when (null? (cdr arg*)) (help))
-           (let ((p (open-file-input-port (cadr arg*))))
+           (let ((p (open-file-image-port (cadr arg*))))
              (load-boot-sector p 'floppy)
              (pcbios-load-floppy-image bios-data 0 p)
              (lp (cddr arg*))))
           ((string=? arg "-fdb")
            (when (null? (cdr arg*)) (help))
-           (let ((p (open-file-input-port (cadr arg*))))
+           (let ((p (open-file-image-port (cadr arg*))))
              (pcbios-load-floppy-image bios-data 1 p)
              (lp (cddr arg*))))
           ((string=? arg "-hda")
            (when (null? (cdr arg*)) (help))
-           (let ((p (open-file-input-port (cadr arg*))))
+           (let ((p (open-file-image-port (cadr arg*))))
              (load-boot-sector p #f)
              (pcbios-load-harddrive-image bios-data 0 p)
              (lp (cddr arg*))))

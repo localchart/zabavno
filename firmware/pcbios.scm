@@ -46,8 +46,17 @@
             1 1)))))
 
   (define-record-type drive
-    (fields port sectors
-            cylinders heads/cylinder sectors/track))
+    (fields port
+            sectors cylinders heads/cylinder sectors/track)
+    (protocol
+     (lambda (p)
+       (lambda (port cylinders heads/cylinder sectors/track)
+         (p port
+            (* cylinders heads/cylinder sectors/track)
+            cylinders heads/cylinder sectors/track)))))
+
+  (define (drive-write-protected? drive)
+    (not (output-port? (drive-port drive))))
 
   ;; Converts from CHS format to LBA.
   (define (drive-chs->lba drive cylinder head sector)
@@ -132,13 +141,40 @@
       (memory-u8-set! (real-pointer #xF000 #xFFFE) #xF8)
       bios-data))
 
+  (define (make-floppy-drive image-port)
+    ;; Guess the C/H/S parameters for floppies with 512-byte sectors.
+    ;; This is very basic, a better option would be to read the BPB.
+    (define common*
+      '((80 2 9)                        ; 3½" 720 KB
+        (80 2 18)                       ; 3½" 1440 KB
+        (80 2 36)                       ; 3½" 2880 KB
+        (40 1 8)                        ; 5¼" 160 KB
+        (40 1 9)                        ; 5¼" 180 KB
+        (40 2 8)                        ; 5¼" 320 KB
+        (40 2 9)                        ; 5¼" 360 KB
+        (80 2 15)))                     ; 5¼" 1200 KB
+    (let ((bytes (port-length image-port)))
+      (or
+        ;; Try a few known formats.
+        (exists (lambda (chs)
+                  (and (= bytes (apply * 512 chs))
+                       (apply make-drive image-port chs)))
+                common*)
+        ;; Try some crazy 3½" formats.
+        (let ((c 80) (s 2))
+          (let lp-h ((h 8))
+            (and (<= h 36)
+                 (if (= bytes (* 512 c h s))
+                     (make-drive image-port c h s)
+                     (lp-h (+ h 1))))))
+        ;; Well, maybe it's a standard 1440 KB floppy. The
+        ;; image could be truncated.
+        (make-drive image-port 80 2 18))))
+
   (define (pcbios-load-floppy-image bios-data drive-index image-port)
-    ;; Update the BDA
     (let ((old-drive (vector-ref (bios-drives bios-data) drive-index)))
-      (vector-set! (bios-drives bios-data) drive-index
-                   (make-drive image-port
-                               2880
-                               80 2 18))
+      (let ((drive (make-floppy-drive image-port)))
+        (vector-set! (bios-drives bios-data) drive-index drive))
       (when (not old-drive)             ;update the BDA
         (do ((i 0 (fx+ i 1))
              (drives 0 (if (vector-ref (bios-drives bios-data) i)
@@ -161,7 +197,6 @@
              (sectors/track 26))
         (vector-set! (bios-drives bios-data) drive-index
                      (make-drive image-port
-                                 sectors
                                  cylinders heads/cylinder sectors/track))
         (when (not old-drive)           ;update the BDA
           (memory-u8-set! (real-pointer #x0040 #x75)
@@ -273,6 +308,8 @@
                                  ";" (number->string (+ column 1)) "H"))
          (bios-cursor-row-set! bios-data row)
          (bios-cursor-column-set! bios-data row)))
+      ((#x05)                           ;select active display page
+       #f)
       ((#x06 #x07)                      ;scroll up/down window
        ;; XXX: The left-right stuff probably only works with
        ;; xterm, it's something that terminfo/curses should be
@@ -358,13 +395,15 @@
              (cylinder (fxior (bitwise-bit-field (machine-CX M) 8 16)
                               (fxarithmetic-shift-left
                                (bitwise-bit-field (machine-CX M) 6 8) 6)))
-             (sector (bitwise-bit-field (machine-CX M) 0 6))
              (head (bitwise-bit-field (machine-DX M) 8 16))
+             (sector (bitwise-bit-field (machine-CX M) 0 6))
              (drive-idx (bitwise-bit-field (machine-DX M) 0 8))
              (buffer-seg (machine-ES M))
-             (buffer-off (machine-BX M)))
+             (buffer-off (machine-BX M))
+             (sector-size 512))
          (when (machine-debug M)
-           (print "pcbios: read " sectors " sectors from " (list cylinder head sector)
+           (print "pcbios: read " sectors " sectors of length " sector-size
+                  " from " (list cylinder head sector)
                   " on drive #x" (hex drive-idx) " to " (hex buffer-seg) ":" (hex buffer-off)))
          (cond
            ((zero? sectors)
@@ -372,18 +411,19 @@
            ((vector-ref (bios-drives bios-data) drive-idx)
             => (lambda (drive)
                  (let ((lba (drive-chs->lba drive cylinder head sector)))
-                   (set-port-position! (drive-port drive) (* lba 512))
-                   (let ((blocks (get-bytevector-n (drive-port drive) (fx* sectors 512))))
+                   (set-port-position! (drive-port drive) (* lba sector-size))
+                   (let ((blocks (get-bytevector-n (drive-port drive) (fx* sectors sector-size))))
                      (define (set-status status sectors-read)
                        (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xFFFF))
                                                  (fxarithmetic-shift-left status 8)
                                                  (if (bytevector? blocks)
-                                                     (fxdiv (bytevector-length blocks) 512)
+                                                     (fxdiv (bytevector-length blocks) sector-size)
                                                      0))))
-                     (cond ((or (eof-object? blocks) (fx<? (bytevector-length blocks) 512))
-                            (print "pcbios: disk read error from drive=#x" (hex drive-idx)
-                                   " c=" cylinder ", h=" head ", s=" sector
-                                   ", lba=" lba ", sectors=" sectors)
+                     (cond ((or (eof-object? blocks) (fx<? (bytevector-length blocks) sector-size))
+                            (when (machine-debug M)
+                              (print "pcbios: disk read error from drive=#x" (hex drive-idx)
+                                     " c=" cylinder ", h=" head ", s=" sector
+                                     ", lba=" lba ", sectors=" sectors))
                             (set-CF M)
                             (set-status #x04 0)) ;04 = sector not found/read error
                            (else
@@ -391,6 +431,72 @@
                             (copy-to-memory (real-pointer buffer-seg buffer-off) blocks)
                             (clear-CF M)
                             (set-status #x00 (fxdiv (bytevector-length blocks) 512))))))))
+           (else
+            (set-CF M)))))
+      ((#x03)                      ;write disk sectors
+       (let ((sectors (bitwise-and (machine-AX M) #xff))
+             (cylinder (fxior (bitwise-bit-field (machine-CX M) 8 16)
+                              (fxarithmetic-shift-left
+                               (bitwise-bit-field (machine-CX M) 6 8) 6)))
+             (head (bitwise-bit-field (machine-DX M) 8 16))
+             (sector (bitwise-bit-field (machine-CX M) 0 6))
+             (drive-idx (bitwise-bit-field (machine-DX M) 0 8))
+             (buffer-seg (machine-ES M))
+             (buffer-off (machine-BX M))
+             (sector-size 512))
+         (when (machine-debug M)
+           (print "pcbios: write " sectors " sectors to " (list cylinder head sector)
+                  " on drive #x" (hex drive-idx) " from " (hex buffer-seg) ":" (hex buffer-off)))
+         (cond
+           ((vector-ref (bios-drives bios-data) drive-idx) =>
+            (lambda (drive)
+              (let lp ((lba (drive-chs->lba drive cylinder head sector))
+                       (sectors-written 0)
+                       (sectors sectors))
+                (define (set-status status sectors-written)
+                  (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xFFFF))
+                                            (fxarithmetic-shift-left status 8)
+                                            sectors-written)))
+                (cond ((drive-write-protected? drive)
+                       (set-CF M))
+                      ((> lba (drive-sectors drive))
+                       (when (machine-debug M)
+                         (print "pcbios: disk write error to drive=#x" (hex drive-idx)
+                                ", lba=" lba))
+                       (set-CF M)
+                       (set-status #x04 0)) ;04 = sector not found/read error
+                      ((zero? sectors)
+                       (clear-CF M)
+                       (set-status #x00 sectors-written))
+                      (else
+                       (set-port-position! (drive-port drive) (* lba sector-size))
+                       (let ((block (copy-from-memory (real-pointer buffer-seg buffer-off) sector-size)))
+                         #;(hexdump (current-error-port) block)
+                         (put-bytevector (drive-port drive) block)
+                         (lp (+ lba 1) (+ sectors-written 1) (- sectors 1))))))))
+           (else
+            (set-CF M)))))
+      ((#x04)                      ;verify disk sectors
+       (let ((sectors (bitwise-and (machine-AX M) #xff))
+             (cylinder (fxior (bitwise-bit-field (machine-CX M) 8 16)
+                              (fxarithmetic-shift-left
+                               (bitwise-bit-field (machine-CX M) 6 8) 6)))
+             (head (bitwise-bit-field (machine-DX M) 8 16))
+             (sector (bitwise-bit-field (machine-CX M) 0 6))
+             (drive-idx (bitwise-bit-field (machine-DX M) 0 8))
+             (sector-size 512))
+         (when (machine-debug M)
+           (print "pcbios: verify " sectors " sectors at " (list cylinder head sector)
+                  " on drive #x" (hex drive-idx)))
+         (cond
+           ((vector-ref (bios-drives bios-data) drive-idx) =>
+            (lambda (drive)
+              (define (set-status status sectors-written)
+                (machine-AX-set! M (fxior (fxand (machine-AX M) (fxnot #xFFFF))
+                                          (fxarithmetic-shift-left status 8)
+                                          sectors-written)))
+              (clear-CF M)
+              (set-status #x00 sectors)))
            (else
             (set-CF M)))))
       ((#x08)                      ;get drive parameters

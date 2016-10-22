@@ -41,7 +41,7 @@
       ;; Start running code at 0000:7C00.
       (machine-CS-set! M #x0000)
       (machine-IP-set! M #x7C00)
-      (machine-DX-set! M (if floppy? #x2000 #x0280)) ;device supported by INT 13
+      (machine-DX-set! M (if floppy? #x0000 #x0080)) ;boot device
       (set-port-position! image-port 0)
       (let ((boot-sector (get-bytevector-n image-port 512)))
         (copy-to-memory (real-pointer (machine-CS M) (machine-IP M)) boot-sector)))))
