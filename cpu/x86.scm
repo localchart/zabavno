@@ -123,15 +123,23 @@
   (define disassemble
     (guard (exn
             (else #f))
-      (let ((get-instruction
-             (eval 'get-instruction (environment '(weinholt disassembler x86)))))
+      (letrec ((get-instruction
+                (eval 'get-instruction (environment '(weinholt disassembler x86))))
+               (hexlify-instruction
+                (lambda (x)
+                  (cond ((number? x)
+                         (string-append "#x" (number->string x 16)))
+                        ((pair? x)
+                         (cons (hexlify-instruction (car x))
+                               (hexlify-instruction (cdr x))))
+                        (else x)))))
         (lambda (bv)
           (call-with-port (open-bytevector-input-port bv)
             (lambda (p)
               (guard
                   (exn
                    (else `(undefined: ,(condition-message exn) ,@(condition-irritants exn))))
-                (get-instruction p 16 #f))))))))
+                (hexlify-instruction (get-instruction p 16 #f)))))))))
 
   ;; Import cp0 for development.
   (define expand/optimize
