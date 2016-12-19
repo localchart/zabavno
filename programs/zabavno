@@ -32,8 +32,7 @@
   (display "The zabavno machine emulator\n\
 Usage: zabavno [--debug] [--trace] [-fda floppy.img] [-hda disk.img]\n\
 \n"
-           (current-error-port))
-  (exit 1))
+           (current-error-port)))
 
 (define (open-file-image-port filename)
   (guard (exn
@@ -48,6 +47,9 @@ Usage: zabavno [--debug] [--trace] [-fda floppy.img] [-hda disk.img]\n\
     (unless (null? arg*)
       (let ((arg (car arg*)))
         (cond
+          ((string=? arg "--help")
+           (help)
+           (exit 0))
           ((string=? arg "--debug")
            (machine-debug-set! M #t)
            (lp (cdr arg*)))
@@ -55,24 +57,25 @@ Usage: zabavno [--debug] [--trace] [-fda floppy.img] [-hda disk.img]\n\
            (machine-trace-set! M #t)
            (lp (cdr arg*)))
           ((string=? arg "-fda")
-           (when (null? (cdr arg*)) (help))
+           (when (null? (cdr arg*)) (help) (exit 1))
            (let ((p (open-file-image-port (cadr arg*))))
              (load-boot-sector p 'floppy)
              (pcbios-load-floppy-image bios-data 0 p)
              (lp (cddr arg*))))
           ((string=? arg "-fdb")
-           (when (null? (cdr arg*)) (help))
+           (when (null? (cdr arg*)) (help) (exit 1))
            (let ((p (open-file-image-port (cadr arg*))))
              (pcbios-load-floppy-image bios-data 1 p)
              (lp (cddr arg*))))
           ((string=? arg "-hda")
-           (when (null? (cdr arg*)) (help))
+           (when (null? (cdr arg*)) (help) (exit 1))
            (let ((p (open-file-image-port (cadr arg*))))
              (load-boot-sector p #f)
              (pcbios-load-harddrive-image bios-data 0 p)
              (lp (cddr arg*))))
           (else
-           (help)))))))
+           (help)
+           (exit 1)))))))
 
 (define (main command-line)
   (let ((M (make-machine)))

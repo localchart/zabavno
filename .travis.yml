@@ -1,0 +1,17 @@
+language: c
+
+os:
+  - linux
+
+compiler:
+  - gcc
+
+before_script:
+  - wget https://github.com/cisco/ChezScheme/archive/master.zip -O ChezScheme-master.zip
+  - unzip ChezScheme-master.zip
+  - pushd ChezScheme-master && ./configure --installprefix=$TRAVIS_BUILD_DIR/chez && make && make install && popd
+  - export PATH=$TRAVIS_BUILD_DIR/chez/bin:$PATH
+  - export CHEZSCHEMELIBDIRS=$TRAVIS_BUILD_DIR/..
+
+script:
+  - programs/zabavno --help

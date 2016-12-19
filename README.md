@@ -1,5 +1,7 @@
 # Zabavno x86 emulator
 
+[![Build Status](https://travis-ci.org/weinholt/zabavno.svg?branch=master)](https://travis-ci.org/weinholt/zabavno)
+
 Zabavno is an emulator for the x86 instruction set architecture. The
 idea is to emulate an Intel 80386 in real-address mode, by translating
 machine code to Scheme code and eval'ing it.
