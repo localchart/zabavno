@@ -1221,11 +1221,17 @@
       (cgbit-set? (cgand (cgxor a result)
                          (cgxor b result))
                   (fx- result-width 1)))
-    (define (cg-AF cg% a b)
-      `(if ,(cgbit-set? (cg% (cgand a #b1111)
-                             (cgand b #b1111))
-                        4)
-           ,flag-AF 0))
+    (define cg-AF
+      (case-lambda
+        ((cg% a b)
+         `(if ,(cgbit-set? (cg% (cgand a #b1111) (cgand b #b1111))
+                           4)
+              ,flag-AF 0))
+        ((cg% a b c)
+         `(if ,(cgbit-set? (cg% (cg% (cgand a #b1111) (cgand b #b1111))
+                                (cgand c #b1111))
+                           4)
+              ,flag-AF 0))))
     (define (cg-CF)
       `(if ,(cgbit-set? 'tmp eos) ,flag-CF 0))
     (case operator
@@ -1277,12 +1283,13 @@
       ((ADC)
        `((t0 ,t0)
          (t1 ,t1)
-         (tmp ,(cg+ (cg+ 't0 't1) '(fl-CF))) ;CF is bit 0
+         (tmp-CF (fl-CF))
+         (tmp ,(cg+ (cg+ 't0 't1) 'tmp-CF)) ;CF is bit 0
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (if ,(cgadd-overflow? 't0 't1 result eos) ,flag-OF 0)))
          (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
-         (fl-AF (lambda () ,(cg-AF cg+ 't0 't1)))
+         (fl-AF (lambda () ,(cg-AF cg+ 't0 't1 'tmp-CF)))
          (fl-PF (lambda () ,(cg-PF result)))
          (fl-CF (lambda () ,(cg-CF)))))
 
@@ -1438,7 +1445,7 @@
          (fl-OF (lambda () (if ,(cgadd-overflow? 't0 't1 result eos) ,flag-OF 0)))
          (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
-         (fl-AF (lambda () ,(cg-AF cg+ 't0 't1)))
+         (fl-AF (lambda () ,(cg-AF (if (eqv? t1 1) cg+ cg-) 't0 1)))
          (fl-PF (lambda () ,(cg-PF result)))))
 
       ((MUL)
@@ -1576,7 +1583,7 @@
          (fl-OF (lambda () (if ,(cgsub-overflow? 't0 't1 result eos) ,flag-OF 0)))
          (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
-         (fl-AF (lambda () ,(cg-AF cg- 't0 't1)))
+         (fl-AF (lambda () ,(cg-AF cg- 't0 't1 '(fl-CF))))
          (fl-PF (lambda () ,(cg-PF result)))
          (fl-CF (lambda () ,(cg-CF)))))
 
