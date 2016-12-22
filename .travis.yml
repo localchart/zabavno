@@ -7,11 +7,17 @@ compiler:
   - gcc
 
 before_script:
+  # Install Chez Scheme
   - wget https://github.com/cisco/ChezScheme/archive/master.zip -O ChezScheme-master.zip
   - unzip ChezScheme-master.zip
   - pushd ChezScheme-master && ./configure --installprefix=$TRAVIS_BUILD_DIR/chez && make && make install && popd
   - export PATH=$TRAVIS_BUILD_DIR/chez/bin:$PATH
-  - export CHEZSCHEMELIBDIRS=$TRAVIS_BUILD_DIR/..
+  - export CHEZSCHEMELIBDIRS=$TRAVIS_BUILD_DIR/..:$TRAVIS_BUILD_DIR
+  # Install machine-code
+  - wget https://github.com/weinholt/machine-code/archive/master.zip -O machine-code-master.zip
+  - unzip machine-code-master.zip
+  - mv machine-code-master machine-code
 
 script:
   - programs/zabavno --help
+  - tests/x86/generate.scm && chmod +x generate.out && ./generate.out

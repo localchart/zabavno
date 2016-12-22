@@ -34,8 +34,9 @@
 ;; compiled by eval so the emulator is somewhat snappy.
 
 ;; Debugging is enabled by setting machine-debug to a true value. The
-;; debug output contains disassembly if the (weinholt disassembler
-;; x86) library from Industria is available.
+;; debug output contains disassembly if the (machine-code disassembler
+;; x86) library from https://github.com/weinholt/machine-code is
+;; available.
 
 (library (zabavno cpu x86)
   (export machine-run
@@ -125,7 +126,7 @@
     (guard (exn
             (else #f))
       (letrec ((get-instruction
-                (eval 'get-instruction (environment '(weinholt disassembler x86))))
+                (eval 'get-instruction (environment '(machine-code disassembler x86))))
                (hexlify-instruction
                 (lambda (x)
                   (cond ((number? x)
