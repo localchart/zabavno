@@ -1246,6 +1246,7 @@
          (tmp (fxand #xff (fx+ (fxand t0 #xff)
                                (fx* t1 (fxbit-field t0 8 16)))))
          (,result tmp)
+         (div-trap? #f)
          (fl-OF (lambda () 0))          ;undefined
          (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
@@ -1256,10 +1257,12 @@
       ((AAM)
        `((t0 ,t0)
          (t1 ,t1)
-         (ah (fxdiv t0 t1))
-         (al (fxmod t0 t1))
+         (div-by-zero (eqv? t1 0))
+         (ah (if div-by-zero 0 (fxdiv t0 t1)))
+         (al (if div-by-zero 0 (fxmod t0 t1)))
          (tmp (fxior (fxarithmetic-shift-left ah 8) al))
          (,result tmp)
+         (div-trap? div-by-zero)
          ;; Flags reflect AL only, according to Intel documentation.
          (fl-OF (lambda () 0))          ;undefined
          (fl-SF (lambda () ,(cg-SF 'al 8)))
@@ -2860,9 +2863,11 @@
                       (eos (if (eqv? op #xD4) 8 16)))
                   (emit `(let* (,@(cgl-arithmetic 'result #f 16 operator
                                                   (cg-register-ref idx-AX eos)
-                                                  imm)
-                                ,@(cgl-register-update idx-AX 16 'result))
-                           ,(continue #t ip))))))
+                                                  imm))
+                           (if div-trap?
+                               ,(cg-int-divide-by-zero-error return merge start-ip)
+                               (let* (,@(cgl-register-update idx-AX 16 'result))
+                                 ,(continue #t ip))))))))
              ((#xD6)                    ; salc
               (emit
                `(let (,@(cgl-register-update idx-AX 8
