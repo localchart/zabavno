@@ -20,4 +20,5 @@ before_script:
 
 script:
   - programs/zabavno --help
-  - tests/x86/generate.scm && chmod +x generate.out && ./generate.out
+  - tests/x86/generate.scm && chmod +x generate.out
+  - ./generate.out

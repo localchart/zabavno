@@ -70,6 +70,7 @@
           machine-IP machine-IP-set!
           machine-FLAGS machine-FLAGS-set!
           machine-CPL
+          machine-undefined-flags
           machine-exception-cause machine-exception-cause-set!
           memory-u8-ref memory-u16-ref memory-u32-ref
           memory-s8-ref memory-s16-ref memory-s32-ref
@@ -98,7 +99,7 @@
   (define DEFAULT-MEMORY-FILL #xFF)
 
   (define pretty-print
-    (lambda (x) (write x (current-error-port)) (newline (current-error-port))))
+    (lambda (x) (display x (current-error-port)) (newline (current-error-port))))
 
   (define code-env (environment
                     '(except (rnrs (6)) bitwise-rotate-bit-field)
@@ -192,28 +193,31 @@
             (mutable IP)
             (mutable FLAGS)
             (mutable CPL)
+            (mutable undefined-flags)
             (immutable int-handlers)
             (immutable translations)
             (mutable exception-cause))
     (protocol
      (lambda (p)
        (lambda ()
-         (p #f #f
-            ;; Memory and I/O
-            (make-empty-memory)
-            (make-empty-ports)
-            ;; GP registers
-            0 0 0 0 0 0 0 0
-            ;; Segment registers
-            0 0 0 0 0 0
-            ;; System registers
-            control-flags-always-set 0 0
-            0 0 0 0 0 #x3FF 0
-            ;; Other stuff
-            0 (fxior flags-always-set flag-IF) 0
-            (make-fallback-int-handlers)
-            (make-eqv-hashtable)
-            #f)))))
+         (let ((fl-undef-boot ; arithmetic flags undefined at start/boot.
+                (fxior flag-OF flag-SF flag-ZF flag-AF flag-PF flag-CF)))
+           (p #f #f
+              ;; Memory and I/O
+              (make-empty-memory)
+              (make-empty-ports)
+              ;; GP registers
+              0 0 0 0 0 0 0 0
+              ;; Segment registers
+              0 0 0 0 0 0
+              ;; System registers
+              control-flags-always-set 0 0
+              0 0 0 0 0 #x3FF 0
+              ;; Other stuff
+              0 (fxior flags-always-set flag-IF) 0 fl-undef-boot
+              (make-fallback-int-handlers)
+              (make-eqv-hashtable)
+              #f))))))
 
   (define *current-machine*)
   (define RAM)
@@ -359,16 +363,20 @@
 
 ;;; Flags
 
-  (define (print-flags fl)
+  (define (print-flags fl fl-undef)
     (define flag*
       '(31 30 29 28 27 26 25 24 23 22 ID VIP VIF AC VM RF
            15 NT IOPL1 IOPL0 OF DF IF TF SF ZF 5 AF 3 PF 1 CF))
     (do ((m (expt 2 31) (fxarithmetic-shift-right m 1))
          (flag* flag* (cdr flag*)))
         ((fxzero? m))
-      (unless (fxzero? (fxand m fl))
-        (display #\space (current-error-port))
-        (display (car flag*) (current-error-port)))))
+      (cond ((eqv? m 2))
+            ((not (fxzero? (fxand m fl)))
+             (display #\space (current-error-port))
+             (display (car flag*) (current-error-port)))
+            ((not (fxzero? (fxand m fl-undef)))
+             (display #\space (current-error-port))
+             (display (list (car flag*)) (current-error-port))))))
 
   (define flag-OF (expt 2 11))          ;overflow
   (define flag-SF (expt 2 7))           ;sign
@@ -1168,7 +1176,9 @@
     ;; only evaluates the flags once.
     `(,@(cgl-merge-fl merge)
       (fl^ (fl))
-      (fl (lambda () fl^))))
+      (fl (lambda () fl^))
+      (fl-undef^ (fl-undef))
+      (fl-undef (lambda () fl-undef^))))
 
 ;;; Translation: arithmetic
 
@@ -1205,7 +1215,8 @@
       (fl-CF (lambda () (if (eqv? count 0) (fl-CF)
                             (if ,(cgbit-set? 't0 (cg- eos 'count))
                                 ,flag-CF
-                                0))))))
+                                0))))
+      (fl-undef (lambda () ,(fxior flag-OF flag-AF)))))
 
   (define (cgl-arithmetic result result:u eos operator t0 t1)
     ;; TODO: Check the corner cases.
@@ -1465,7 +1476,8 @@
          (fl-ZF (lambda () 0))          ;undefined
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () 0))          ;undefined
-         (fl-CF (lambda () (if (zero? ,result:u) 0 ,flag-CF)))))
+         (fl-CF (lambda () (if (zero? ,result:u) 0 ,flag-CF)))
+         (fl-undef (lambda () ,(fxior flag-SF flag-ZF flag-AF flag-PF flag-CF)))))
 
       ((NEG)
        `((t0 ,t0)
@@ -1663,7 +1675,8 @@
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () 0))
          (fl-PF (lambda () ,(cg-PF result)))
-         (fl-CF (lambda () 0))))
+         (fl-CF (lambda () 0))
+         (fl-undef (lambda () ,flag-AF))))
 
       (else
        (error 'cgl-arithmetic "TODO: Unimplemented operator" operator))))
@@ -1958,7 +1971,7 @@
   ;; translated instructions.
   (define (wrap expr)
     ;; Wrap the flags register and the arithmetic flags.
-    `(lambda (abort fl AX CX DX BX SP BP SI DI
+    `(lambda (abort fl fl-undef AX CX DX BX SP BP SI DI
                     cs ds ss es fs gs)
        ;; Accessors for RAM and I/O ports. The case-lambda and the
        ;; case will be optimized away by cp0.
@@ -1986,19 +1999,20 @@
        ;; ADD, the flags from the first ADD are not used and those
        ;; fl-* procedures will never be called).
        (let ((fl (lambda () fl))
+             (fl-undef (lambda () fl-undef))
              (fl-OF (lambda () (fxand fl ,flag-OF)))
              (fl-SF (lambda () (fxand fl ,flag-SF)))
              (fl-ZF (lambda () (fxand fl ,flag-ZF)))
              (fl-AF (lambda () (fxand fl ,flag-AF)))
              (fl-PF (lambda () (fxand fl ,flag-PF)))
              (fl-CF (lambda () (fxand fl ,flag-CF))))
-         (,expr fl AX CX DX BX SP BP SI DI
+         (,expr fl fl-undef AX CX DX BX SP BP SI DI
                 cs ds ss es fs gs))))
 
   ;; Each expression emitted by the translation is furthermore wrapped
   ;; in a lambda. Translated code is in continuation passing style.
   (define (emit expr)
-    `(lambda (fl AX CX DX BX SP BP SI DI
+    `(lambda (fl fl-undef AX CX DX BX SP BP SI DI
                  cs ds ss es fs gs)
        ,expr))
 
@@ -2006,13 +2020,13 @@
   ;; possibly merging updates from arithmetic operations.
   (define (return merge ip)
     `(let* (,@(cgl-merge-fl merge))
-       (values ,ip (fl) AX CX DX BX SP BP SI DI
+       (values ,ip (fl) (fl-undef) AX CX DX BX SP BP SI DI
                cs ds ss es fs gs)))
 
   ;; Returns to to machine-run from anywhere in the instruction.
   (define (abort merge ip abort-cause)
     `(let* (,@(cgl-merge-fl merge))
-       (abort ,ip (fl) AX CX DX BX SP BP SI DI
+       (abort ,ip (fl) (fl-undef) AX CX DX BX SP BP SI DI
               cs ds ss es fs gs ',abort-cause)))
 
   ;; Translate a basic block. This procedure reads instructions at
@@ -2033,7 +2047,7 @@
            (if (fx>=? instruction-count instruction-limit)
                (return merge ip)
                `(,(next merge ip instruction-count)
-                 fl AX CX DX BX SP BP SI DI
+                 fl fl-undef AX CX DX BX SP BP SI DI
                  cs ds ss es fs gs))))
        (define first? (eqv? instruction-count 0))
        (define start-ip ip)
@@ -2356,7 +2370,8 @@
                            (fl-ZF (lambda () ,(cg-ZF 'al)))
                            (fl-AF (lambda () AF))
                            (fl-PF (lambda () ,(cg-PF 'al)))
-                           (fl-CF (lambda () CF)))
+                           (fl-CF (lambda () CF))
+                           (fl-undef (lambda () ,flag-OF)))
                       ,(continue #t ip))))))
              ((#x30 #x31 #x32 #x33 #x34 #x35)
               (emit (cg-arithmetic-group op 'XOR ip cs dseg sseg eos eas continue)))
@@ -2380,7 +2395,8 @@
                            (fl-ZF (lambda () 0)) ;undefined
                            (fl-AF (lambda () (if adjust ,flag-AF 0)))
                            (fl-PF (lambda () 0)) ;undefined
-                           (fl-CF (lambda () (if adjust ,flag-CF 0))))
+                           (fl-CF (lambda () (if adjust ,flag-CF 0)))
+                           (fl-undef (lambda () ,(fxior flag-OF flag-SF flag-ZF flag-PF))))
                       ,(continue #t ip))))))
              ((#x40 #x41 #x42 #x43 #x44 #x45 #x46 #x47 #x48 #x49 #x4A #x4B #x4C #x4D #x4E #x4F)
               ;; inc/dec *rAX/r8 ... *rDI/r15
@@ -2633,7 +2649,8 @@
                                                                          (- (expt 2 eos) 1))))
                                                     ;; Ignore these flags
                                                     (bitwise-not
-                                                     (bitwise-ior flags-never-set flag-RF flag-VM))))))))
+                                                     (bitwise-ior flags-never-set flag-RF flag-VM)))))))
+                              (fl-undef (lambda () 0)))
                           ;; Need to return so that the fl-*
                           ;; procedures will be reloaded.
                           ,(return #f ip)))))
@@ -2644,7 +2661,8 @@
                        (fl-ZF (lambda () ,(cgand flag-ZF 'AH)))
                        (fl-AF (lambda () ,(cgand flag-AF 'AH)))
                        (fl-PF (lambda () ,(cgand flag-PF 'AH)))
-                       (fl-CF (lambda () ,(cgand flag-CF 'AH))))
+                       (fl-CF (lambda () ,(cgand flag-CF 'AH)))
+                       (fl-undef (lambda () (fxand (fl-undef) ,flag-OF))))
                   ,(continue #t ip))))
              ((#x9F)                    ; lahf
               (emit
@@ -3142,11 +3160,12 @@
 ;;; Main loop
 
   (define (%run-until-abort M debug instruction-limit
-                            fl ip AX CX DX BX SP BP SI DI
+                            fl fl-undef ip AX CX DX BX SP BP SI DI
                             cs ds ss es fs gs)
     (call/cc
       (lambda (abort)
-        (let loop ((ip ip) (fl fl) (AX AX) (CX CX) (DX DX) (BX BX)
+        (let loop ((ip ip) (fl fl) (fl-undef fl-undef)
+                   (AX AX) (CX CX) (DX DX) (BX BX)
                    (SP SP) (BP BP) (SI SI) (DI DI)
                    (cs cs) (ds ds) (ss ss) (es es) (fs fs) (gs gs))
           (when debug
@@ -3163,7 +3182,7 @@
                     "  CS=" (hex (segment-selector cs) 4)
                     "  IP=" (hex ip 4)
                     "  ")
-            (print-flags fl)
+            (print-flags fl fl-undef)
             (newline (current-error-port))
             (print* "SS:SP: ")
             (print-memory (fx+ ss SP) 16)
@@ -3176,11 +3195,11 @@
             ;; Call the translation and get new values for the
             ;; registers. The translation may choose to abort in the
             ;; middle of a translation.
-            (let-values (((ip^ fl^ AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^
+            (let-values (((ip^ fl^ fl-undef^ AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^
                                cs^ ds^ ss^ es^ fs^ gs^)
-                          (trans abort fl AX CX DX BX SP BP SI DI
+                          (trans abort fl fl-undef AX CX DX BX SP BP SI DI
                                  cs ds ss es fs gs)))
-              (loop ip^ fl^ AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^
+              (loop ip^ fl^ fl-undef^ AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^
                     cs^ ds^ ss^ es^ fs^ gs^)))))))
 
   ;; Run instructions until HLT. If the return value is 'stop then the
@@ -3194,6 +3213,7 @@
     (let ((fl (fxand (fxior (machine-FLAGS M)
                             flags-always-set)
                      (fxnot flags-never-set)))
+          (fl-undef (machine-undefined-flags M))
           (ip (machine-IP M))
           (cs (fxasl (machine-CS M) 4))
           (ds (fxasl (machine-DS M) 4))
@@ -3209,10 +3229,10 @@
           (BP (machine-BP M))
           (SI (machine-SI M))
           (DI (machine-DI M)))
-      (let-values (((ip^ fl^ AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^
+      (let-values (((ip^ fl^ fl-undef^ AX^ CX^ DX^ BX^ SP^ BP^ SI^ DI^
                          cs^ ds^ ss^ es^ fs^ gs^ abort-cause)
                     (%run-until-abort M debug (if trace 1 32)
-                                      fl ip AX CX DX BX SP BP SI DI
+                                      fl fl-undef ip AX CX DX BX SP BP SI DI
                                       cs ds ss es fs gs)))
         ;; Save the new machine state.
         (machine-AX-set! M AX^)
@@ -3231,6 +3251,7 @@
         (machine-GS-set! M (segment-selector gs^))
         (machine-IP-set! M ip^)
         (machine-FLAGS-set! M fl^)
+        (machine-undefined-flags-set! M fl-undef^)
         (case abort-cause
           ((HLT)
            (cond ((and (eqv? cs^ #xF0000) (fx<=? ip^ #xFF))
