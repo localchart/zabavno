@@ -1460,12 +1460,12 @@
          ;; CF and OF are set if the result did not fit in lower
          ;; destination.
          (div-trap? #f)
-         (fl-OF (lambda () (if (>= ,result ,(expt 2 eos)) ,flag-OF 0)))
+         (fl-OF (lambda () (if (zero? ,result:u) 0 ,flag-OF)))
          (fl-SF (lambda () 0))          ;undefined
          (fl-ZF (lambda () 0))          ;undefined
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () 0))          ;undefined
-         (fl-CF (lambda () (if (>= ,result ,(expt 2 eos)) ,flag-CF 0)))))
+         (fl-CF (lambda () (if (zero? ,result:u) 0 ,flag-CF)))))
 
       ((NEG)
        `((t0 ,t0)
