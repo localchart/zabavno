@@ -2335,21 +2335,21 @@
                 ;; doesn't do anything about, maybe it should just be
                 ;; put in a library and be done with.
                 (emit
-                 `(let*-values (((al AF old-CF)
+                 `(let*-values (((old-al AF old-CF)
                                  (values ,(cg-register-ref idx-AX 8) (fl-AF) (fl-CF)))
-                                ((al AF CF)
-                                 (let ((nibble (fxbit-field al 0 4)))
+                                ((al AF CF)  ;adjust the lower nibble
+                                 (let* ((al old-al)
+                                        (nibble (fxbit-field al 0 4)))
                                    (if (or (fx>? nibble 9) (not (eqv? AF 0)))
                                        (values (,fx^ al #x06) ,flag-AF
                                                ;; CF is set if al now has a carry/borrow.
                                                (if (fxbit-set? (,fx^ nibble #x06) 4)
                                                    ,flag-CF old-CF))
-                                       (values al 0 old-CF))))
-                                ((al AF CF)
-                                 (let ((nibble (fxbit-field al 4 8)))
-                                   (if (or (fx>? nibble 9) (not (eqv? old-CF 0)))
-                                       (values (,fx^ al #x60) AF ,flag-CF)
-                                       (values al AF 0)))))
+                                       (values al 0 0))))
+                                ((al AF CF) ;adjust the higher nibble
+                                 (if (or (fx>? old-al #x99) (not (eqv? old-CF 0)))
+                                     (values (,fx^ al #x60) AF ,flag-CF)
+                                     (values al AF ,(if (eqv? op #x27) 0 'CF)))))
                     (let* (,@(cgl-register-update idx-AX 8 'al)
                            (fl-OF (lambda () 0)) ;undefined
                            (fl-SF (lambda () ,(cg-SF 'al 8)))
