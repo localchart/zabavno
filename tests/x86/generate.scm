@@ -76,8 +76,8 @@
            (reverse ret*))
           (else
            (case (car opsyntax*)
-             ((*AL)
-              (lp (cdr opsyntax*) (cons 'al ret*) operand-size))
+             ((*CL) (lp (cdr opsyntax*) (cons 'cl ret*) operand-size))
+             ((*AL) (lp (cdr opsyntax*) (cons 'al ret*) operand-size))
              ((*rAX)
               (let ((operand-size (or operand-size
                                       (case (random 2)
@@ -501,4 +501,5 @@
                        (shl Eb Ib)
                        (shr Eb Ib)
                        (sar Eb Ib)
-                       ))
+                       (shld Ev Gv Ib)
+                       (shld Ev Gv *CL)))

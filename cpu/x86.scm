@@ -1203,20 +1203,47 @@
     `((t0 ,input0)
       (t1 ,input1)
       (count ,(cgand count #b00011111))
-      (tmp ,(cgior (cgasl (cgand 't0 (cg- (cgasl 1 (cgmax 0 (cg- eos 'count))) 1))
-                          'count)
-                   (cgasr 't1 (cgmax 0 (cg- eos 'count)))))
+      (t0_t1 (bitwise-ior (bitwise-arithmetic-shift-left t0 ,eos) t1))
+      (tmp (cond ((and ,(eqv? eos 16) (fx>? count 16))
+                  (bitwise-ior
+                   (bitwise-arithmetic-shift-left t0_t1 count)
+                   (bitwise-arithmetic-shift-left t0 (fx- count 16))))
+                 (else
+                  (bitwise-arithmetic-shift-left t0_t1 count))))
+      (tmp (bitwise-and (bitwise-arithmetic-shift-right tmp ,eos)
+                        ,(- (expt 2 eos) 1)))
       (,result ,(cg-trunc 'tmp eos))
-      (fl-OF (lambda () (fl-OF)))       ;undefined
+      (fl-OF (lambda () (cond ((eqv? count 0) (fl-OF))
+                              ;; undefined if t1 > 1
+                              ((not (eqv? (bitwise-bit-set? tmp ,(fx- eos 1))
+                                          (bitwise-bit-set? t0_t1 ,(cg- (* eos 2) 'count))))
+                               ,flag-OF)
+                              (else 0))))
       (fl-SF (lambda () (if (eqv? count 0) (fl-SF) ,(cg-SF result eos))))
       (fl-ZF (lambda () (if (eqv? count 0) (fl-ZF) ,(cg-ZF result))))
       (fl-AF (lambda () (fl-AF)))       ;undefined
       (fl-PF (lambda () (if (eqv? count 0) (fl-PF) ,(cg-PF result))))
       (fl-CF (lambda () (if (eqv? count 0) (fl-CF)
-                            (if ,(cgbit-set? 't0 (cg- eos 'count))
+                            (if (bitwise-bit-set? t0_t1 ,(cg- (* eos 2) 'count))
                                 ,flag-CF
                                 0))))
-      (fl-undef (lambda () ,(fxior flag-OF flag-AF)))))
+      (fl-undef (lambda ()
+                  (cond ((eqv? count 0)
+                         (fl-undef))
+                        ((fx>? count ,eos)
+                         ;; TODO: even the result is actually undefined
+                         ,(fxior flag-OF flag-SF flag-ZF flag-AF flag-PF flag-CF))
+                        ((eqv? count 1)
+                         ,flag-AF)
+                        (else
+                         ,(fxior flag-OF flag-AF)))))))
+
+
+  ;; (print-gensym 'pretty)
+  ;; (expand/optimize
+  ;;  `(let* ((di #x4003)
+  ;;          ,@(cgl-arithmetic-shld 'result 16 'di 'di 2))
+  ;;     (values result fl-CF)))
 
   (define (cgl-arithmetic result result:u eos operator t0 t1)
     ;; TODO: Check the corner cases.
