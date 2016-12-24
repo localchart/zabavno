@@ -1259,11 +1259,12 @@
          (,result tmp)
          (div-trap? #f)
          (fl-OF (lambda () 0))          ;undefined
-         (fl-SF (lambda () ,(cg-SF result eos)))
+         (fl-SF (lambda () ,(cg-SF result 8)))
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () ,(cg-PF result)))
-         (fl-CF (lambda () 0))))        ;undefined
+         (fl-CF (lambda () 0))          ;undefined
+         (fl-undef (lambda () ,(fxior flag-OF flag-AF flag-CF)))))
 
       ((AAM)
        `((t0 ,t0)
@@ -1280,7 +1281,8 @@
          (fl-ZF (lambda () ,(cg-ZF 'al)))
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () ,(cg-PF 'al)))
-         (fl-CF (lambda () 0))));undefined
+         (fl-CF (lambda () 0))          ;undefined
+         (fl-undef (lambda () ,(fxior flag-OF flag-AF flag-CF)))))
 
       ((ADD)
        `((t0 ,t0)
@@ -1292,7 +1294,8 @@
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () ,(cg-AF cg+ 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))
-         (fl-CF (lambda () ,(cg-CF)))))
+         (fl-CF (lambda () ,(cg-CF)))
+         (fl-undef (lambda () 0))))
 
       ((ADC)
        `((t0 ,t0)
@@ -1305,7 +1308,8 @@
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () ,(cg-AF cg+ 't0 't1 'tmp-CF)))
          (fl-PF (lambda () ,(cg-PF result)))
-         (fl-CF (lambda () ,(cg-CF)))))
+         (fl-CF (lambda () ,(cg-CF)))
+         (fl-undef (lambda () 0))))
 
       ((AND)
        `((tmp ,(cgand t0 t1))
@@ -1315,7 +1319,8 @@
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () ,(cg-PF result)))
-         (fl-CF (lambda () 0))))
+         (fl-CF (lambda () 0))
+         (fl-undef (lambda () ,flag-AF))))
 
       ((BSF)
        `((t0 ,t0)
@@ -1329,7 +1334,8 @@
          (fl-ZF (lambda () (if (eqv? t1 0) ,flag-ZF 0)))
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () 0))          ;undefined
-         (fl-CF (lambda () 0))))        ;undefined
+         (fl-CF (lambda () 0))          ;undefined
+         (fl-undef (lambda () ,(fxior flag-OF flag-SF flag-AF flag-PF flag-CF)))))
 
       ((BSR)
        `((t0 ,t0)
@@ -1343,7 +1349,8 @@
          (fl-ZF (lambda () (if (eqv? t1 0) ,flag-ZF 0)))
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () 0))          ;undefined
-         (fl-CF (lambda () 0))))        ;undefined
+         (fl-CF (lambda () 0))          ;undefined
+         (fl-undef (lambda () ,(fxior flag-OF flag-SF flag-AF flag-PF flag-CF)))))
 
       ((BT)
        `((t0 ,t0)
@@ -1352,10 +1359,10 @@
          (,result tmp)
          (fl-OF (lambda () 0))          ;undefined
          (fl-SF (lambda () 0))          ;undefined
-         (fl-ZF (lambda () 0))          ;undefined
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () 0))          ;undefined
-         (fl-CF (lambda () (if ,(cgbit-set? 't0 't1) ,flag-CF 0)))))
+         (fl-CF (lambda () (if ,(cgbit-set? 't0 't1) ,flag-CF 0)))
+         (fl-undef (lambda () ,(fxior flag-OF flag-SF flag-AF flag-PF)))))
 
       ((BTC)
        `((t0 ,t0)
@@ -1364,10 +1371,10 @@
          (,result tmp)
          (fl-OF (lambda () 0))          ;undefined
          (fl-SF (lambda () 0))          ;undefined
-         (fl-ZF (lambda () 0))          ;undefined
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () 0))          ;undefined
-         (fl-CF (lambda () (if ,(cgbit-set? 't0 't1) ,flag-CF 0)))))
+         (fl-CF (lambda () (if ,(cgbit-set? 't0 't1) ,flag-CF 0)))
+         (fl-undef (lambda () ,(fxior flag-OF flag-SF flag-AF flag-PF)))))
 
       ((BTR)
        `((t0 ,t0)
@@ -1376,10 +1383,10 @@
          (,result tmp)
          (fl-OF (lambda () 0))          ;undefined
          (fl-SF (lambda () 0))          ;undefined
-         (fl-ZF (lambda () 0))          ;undefined
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () 0))          ;undefined
-         (fl-CF (lambda () (if ,(cgbit-set? 't0 't1) ,flag-CF 0)))))
+         (fl-CF (lambda () (if ,(cgbit-set? 't0 't1) ,flag-CF 0)))
+         (fl-undef (lambda () ,(fxior flag-OF flag-SF flag-AF flag-PF)))))
 
       ((BTS)
        `((t0 ,t0)
@@ -1388,10 +1395,10 @@
          (,result tmp)
          (fl-OF (lambda () 0))          ;undefined
          (fl-SF (lambda () 0))          ;undefined
-         (fl-ZF (lambda () 0))          ;undefined
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () 0))          ;undefined
-         (fl-CF (lambda () (if ,(cgbit-set? 't0 't1) ,flag-CF 0)))))
+         (fl-CF (lambda () (if ,(cgbit-set? 't0 't1) ,flag-CF 0)))
+         (fl-undef (lambda () ,(fxior flag-OF flag-SF flag-AF flag-PF)))))
 
       ((DIV)
        ;; This returns an extra variable: div-trap?. If it's true then
@@ -1408,9 +1415,10 @@
          (fl-OF (lambda () 0))          ;undefined
          (fl-SF (lambda () 0))          ;undefined
          (fl-ZF (lambda () 0))          ;undefined
-         (fl-AF (lambda () ,flag-AF))   ;undefined
+         (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () 0))          ;undefined
-         (fl-CF (lambda () 0))))        ;undefined
+         (fl-CF (lambda () 0))          ;undefined
+         (fl-undef (lambda () ,(fxior flag-OF flag-SF flag-ZF flag-AF flag-PF flag-CF)))))
 
       ((IDIV)
        ;; This returns an extra variable: div-trap?. If it's true then
@@ -1428,15 +1436,16 @@
          (fl-OF (lambda () 0))          ;undefined
          (fl-SF (lambda () 0))          ;undefined
          (fl-ZF (lambda () 0))          ;undefined
-         (fl-AF (lambda () ,flag-AF))   ;undefined
+         (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () 0))          ;undefined
-         (fl-CF (lambda () 0))))        ;undefined
+         (fl-CF (lambda () 0))          ;undefined
+         (fl-undef (lambda () ,(fxior flag-OF flag-SF flag-ZF flag-AF flag-PF flag-CF)))))
 
       ((IMUL)
        `((t0 ,(cg-recover-sign t0 eos))
          (t1 ,(cg-recover-sign t1 eos))
          (tmp (* t0 t1))
-         (,result ,(cg-trunc 'tmp eos))
+         (,result (bitwise-bit-field tmp 0 ,eos))
          (,result:u ,(or (eqv? result:u '_)
                          (cg-trunc `(bitwise-arithmetic-shift-right tmp ,eos) eos)))
          ;; CF and OF are set if the result did not fit in lower
@@ -1449,7 +1458,8 @@
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () ,flag-PF))   ;undefined
          (fl-CF (lambda () (if (<= ,(- (expt 2 (- eos 1))) tmp ,(- (expt 2 (- eos 1)) 1))
-                               0 ,flag-CF)))))
+                               0 ,flag-CF)))
+         (fl-undef (lambda () ,(fxior flag-SF flag-ZF flag-AF flag-PF)))))
 
       ((INC/DEC)
        `((t0 ,t0)
@@ -1460,7 +1470,8 @@
          (fl-SF (lambda () ,(cg-SF result eos)))
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () ,(cg-AF (if (eqv? t1 1) cg+ cg-) 't0 1)))
-         (fl-PF (lambda () ,(cg-PF result)))))
+         (fl-PF (lambda () ,(cg-PF result)))
+         (fl-undef (lambda () (fxand (fl-undef) ,flag-CF)))))
 
       ((MUL)
        `((t0 ,t0)
@@ -1488,7 +1499,8 @@
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () ,(cg-AF cg- 0 't0)))
          (fl-PF (lambda () ,(cg-PF result)))
-         (fl-CF (lambda () (if (eqv? t0 0) 0 ,flag-CF)))))
+         (fl-CF (lambda () (if (eqv? t0 0) 0 ,flag-CF)))
+         (fl-undef (lambda () 0))))
 
       ((NOT)
        `((t0 ,t0)
@@ -1505,31 +1517,48 @@
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () 0))          ;undefined
          (fl-PF (lambda () ,(cg-PF result)))
-         (fl-CF (lambda () 0))))
+         (fl-CF (lambda () 0))
+         (fl-undef (lambda () ,flag-AF))))
 
       ((RCL)
        `((t0 ,t0)
          (t1 ,(cgand t1 #b00011111))
-         (tmp (bitwise-rotate-bit-field ; CF becomes bit 0, all else shifted up
-               ,(cgior '(fl-CF) (cgasl 't0 1)) 0 ,(fx+ eos 1) ,(cg- 't1 1)))
+         (tcount ,(case eos
+                    ((8) '(fxmod t1 9))
+                    ((16) '(fxmod t1 17))
+                    (else 't1)))
+         (tmp (if (eqv? tcount 0)
+                  t0
+                  (bitwise-rotate-bit-field ; CF becomes bit 0, all else shifted up
+                   ,(cgior '(fl-CF) (cgasl 't0 1)) 0 ,(fx+ eos 1) ,(cg- 'tcount 1))))
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
                                  ;; undefined if t1 > 1
-                                 ((not (eqv? ,(cgbit-set? 't0 (cg- eos 't1))
+                                 ((not (eqv? ,(cgbit-set? 't0 (cg- eos 'tcount))
                                              ,(cgbit-set? 'tmp (fx- eos 1))))
                                   ,flag-OF)
                                  (else 0))))
-         (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
-                               (if ,(cgbit-set? 't0 (cg- eos 't1))
-                                   ,flag-CF
-                                   0))))))
+         (fl-CF (lambda () (cond ((eqv? tcount 0) (fl-CF))
+                                 (,(cgbit-set? 't0 (cg- eos 'tcount)) ,flag-CF)
+                                 (else 0))))
+         (fl-undef (lambda ()
+                     (let ((fl-undef^ (fl-undef)))
+                       (case t1
+                         ((0) fl-undef^)
+                         ((1) (fxand fl-undef^ ,(fxnot (fxior flag-OF flag-CF))))
+                         (else (fxand (fxior fl-undef^ ,(fxior flag-OF))
+                                      ,(fxnot flag-CF)))))))))
 
       ((RCR)
        `((t0 ,t0)
          (t1 ,(cgand t1 #b00011111))
+         (tcount ,(case eos
+                    ((8) '(fxmod t1 9))
+                    ((16) '(fxmod t1 17))
+                    (else 't1)))
          (tmp (bitwise-rotate-bit-field ; CF becomes bit 9, 17 or 33 of t0
                ,(cgior 't0 (cgasl '(fl-CF) eos))
-               0 ,(fx+ eos 1) ,(cg- (fx+ eos 1) 't1)))
+               0 ,(fx+ eos 1) ,(cg- (fx+ eos 1) 'tcount)))
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
                                  ;; undefined if t1 > 1
@@ -1537,42 +1566,58 @@
                                              ,(cgbit-set? 'tmp (fx- eos 2))))
                                   ,flag-OF)
                                  (else 0))))
-         (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
-                               (if ,(cgbit-set? 't0 (cg- t1 1))
-                                   ,flag-CF
-                                   0))))))
+         (fl-CF (lambda () (cond ((eqv? tcount 0) (fl-CF))
+                                 (,(cgbit-set? 't0 (cg- 'tcount 1)) ,flag-CF)
+                                 (else 0))))
+         (fl-undef (lambda ()
+                     (let ((fl-undef^ (fl-undef)))
+                       (case t1
+                         ((0) fl-undef^)
+                         ((1) (fxand fl-undef^ ,(fxnot (fxior flag-OF flag-CF))))
+                         (else (fxand (fxior fl-undef^ ,(fxior flag-OF))
+                                      ,(fxnot flag-CF)))))))))
 
       ((ROL)
        `((t0 ,t0)
          (t1 ,(cgand t1 #b00011111))
-         (tmp (bitwise-rotate-bit-field t0 0 ,eos t1))
+         (tcount (fxmod t1 ,eos))
+         (tmp (bitwise-rotate-bit-field t0 0 ,eos tcount))
          (,result ,(cg-trunc 'tmp eos))
-         (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
-                                 ;; undefined if t1 > 1
-                                 ((not (eqv? ,(cgbit-set? 't0 (cg- eos 't1))
-                                             ,(cgbit-set? 'tmp (fx- eos 1))))
-                                  ,flag-OF)
+         (fl-OF (lambda () (if (and (eqv? t1 1)
+                                    (not (eqv? ,(cgbit-set? 't0 (cg- eos 'tcount))
+                                               ,(cgbit-set? 'tmp (fx- eos 1)))))
+                               ,flag-OF
+                               0)))
+         (fl-CF (lambda () (cond ((eqv? t1 0) (fl-CF))
+                                 (,(cgbit-set? 'tmp 0) ,flag-CF)
                                  (else 0))))
-         (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
-                               (if ,(cgbit-set? 't0 (cg- eos 't1))
-                                   ,flag-CF
-                                   0))))))
+         (fl-undef (lambda ()
+                     (let ((fl-undef^ (fl-undef)))
+                       (case t1
+                         ((1) (fxand fl-undef^ ,(fxnot (fxior flag-OF flag-CF))))
+                         (else (fxand (fxior fl-undef^ ,(fxior flag-OF))
+                                      ,(fxnot flag-CF)))))))))
 
       ((ROR)
        `((t0 ,t0)
          (t1 ,(cgand t1 #b00011111))
-         (tmp (bitwise-rotate-bit-field t0 0 ,eos ,(cg- eos 't1)))
+         (tcount (fxmod t1 ,eos))
+         (tmp (bitwise-rotate-bit-field t0 0 ,eos ,(cg- eos 'tcount)))
          (,result ,(cg-trunc 'tmp eos))
-         (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
-                                 ;; undefined if t1 > 1
-                                 ((not (eqv? ,(cgbit-set? 'tmp (fx- eos 1))
-                                             ,(cgbit-set? 'tmp (fx- eos 2))))
-                                  ,flag-OF)
+         (fl-OF (lambda () (if (and (eqv? t1 1)
+                                    (not (eqv? ,(cgbit-set? 'tmp (fx- eos 1))
+                                               ,(cgbit-set? 'tmp (fx- eos 2)))))
+                               ,flag-OF
+                               0)))
+         (fl-CF (lambda () (cond ((eqv? t1 0) (fl-CF))
+                                 (,(cgbit-set? 'tmp (cg- eos 1)) ,flag-CF)
                                  (else 0))))
-         (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
-                               (if ,(cgbit-set? 't0 (cg- t1 1))
-                                   ,flag-CF
-                                   0))))))
+         (fl-undef (lambda ()
+                     (let ((fl-undef^ (fl-undef)))
+                       (case t1
+                         ((1) (fxand fl-undef^ ,(fxnot (fxior flag-OF flag-CF))))
+                         (else (fxand (fxior fl-undef^ ,(fxior flag-OF))
+                                      ,(fxnot flag-CF)))))))))
 
       ((SAR)
        `((t0 ,(cg-recover-sign t0 eos))
@@ -1588,7 +1633,12 @@
          (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
                                (if ,(cgbit-set? 't0 (cg- 't1 1))
                                    ,flag-CF
-                                   0))))))
+                                   0))))
+         (fl-undef (lambda ()
+                     (case t1
+                       ((0) (fl-undef))
+                       ((1) ,flag-AF)
+                       (else ,(fxior flag-OF flag-AF)))))))
 
       ((SBB)
        `((t0 ,t0)
@@ -1600,7 +1650,8 @@
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () ,(cg-AF cg- 't0 't1 '(fl-CF))))
          (fl-PF (lambda () ,(cg-PF result)))
-         (fl-CF (lambda () ,(cg-CF)))))
+         (fl-CF (lambda () ,(cg-CF)))
+         (fl-undef (lambda () 0))))
 
       ((SHL)                            ;same as SAL
        `((t0 ,t0)
@@ -1609,8 +1660,9 @@
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
                                  ;; undefined if t1 > 1
-                                 ((not (eqv? ,(cgbit-set? 't0 (cg- eos 't1))
-                                             ,(cgbit-set? 'tmp (fx- eos 1))))
+                                 ((and (eqv? t1 1)
+                                       (not (eqv? ,(cgbit-set? 't0 (cg- eos 't1))
+                                                  ,(cgbit-set? 'tmp (fx- eos 1)))))
                                   ,flag-OF)
                                  (else 0))))
          (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result eos))))
@@ -1618,9 +1670,15 @@
          (fl-AF (lambda () (if (eqv? t1 0) (fl-AF) ,flag-AF))) ;undefined
          (fl-PF (lambda () (if (eqv? t1 0) (fl-PF) ,(cg-PF result))))
          (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
-                               (if ,(cgbit-set? 't0 (cg- eos 't1))
+                               (if (and (< t1 ,eos)
+                                        ,(cgbit-set? 't0 (cg- eos 't1)))
                                    ,flag-CF
-                                   0))))))
+                                   0))))
+         (fl-undef (lambda ()
+                     (case t1
+                       ((0) (fl-undef))
+                       ((1) ,flag-AF)
+                       (else ,(fxior flag-OF flag-AF)))))))
 
       ((SHR)
        `((t0 ,t0)
@@ -1639,7 +1697,12 @@
          (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
                                (if ,(cgbit-set? 't0 (cg- 't1 1))
                                    ,flag-CF
-                                   0))))))
+                                   0))))
+         (fl-undef (lambda ()
+                     (case t1
+                       ((0) (fl-undef))
+                       ((1) ,flag-AF)
+                       (else ,(fxior flag-OF flag-AF)))))))
 
       ((SHRD)
        `((t0 ,t0)
@@ -1653,7 +1716,8 @@
          (fl-PF (lambda () ,(cg-PF result)))
          (fl-CF (lambda () (if ,(cgbit-set? 't0 (cg- 't1 1))
                                ,flag-CF
-                               0)))))
+                               0)))
+         (fl-undef (lambda () ,(fxior flag-OF flag-AF)))))
 
       ((SUB)
        `((t0 ,t0)
@@ -1665,7 +1729,8 @@
          (fl-ZF (lambda () ,(cg-ZF result)))
          (fl-AF (lambda () ,(cg-AF cg- 't0 't1)))
          (fl-PF (lambda () ,(cg-PF result)))
-         (fl-CF (lambda () ,(cg-CF)))))
+         (fl-CF (lambda () ,(cg-CF)))
+         (fl-undef (lambda () 0))))
 
       ((XOR)
        `((tmp ,(cgxor t0 t1))
@@ -2859,7 +2924,8 @@
               (emit (cg-pop* eos 'saved-ip 'saved-cs 'saved-flags
                              `(let ((cs ,(cgasl 'saved-cs 4))
                                     (fl (lambda ()
-                                          ,(cgand 'saved-flags #xffff))))
+                                          ,(cgand 'saved-flags #xffff)))
+                                    (fl-undef (lambda () 0)))
                                 ;; No need to merge the flags.
                                 ,(return #f 'saved-ip)))))
              ((#xD0 #xD1 #xD2 #xD3)
@@ -3033,11 +3099,13 @@
                                     ,(continue #t ip)))))))))))))
              ((#xF8)                    ; clc
               (emit
-               `(let* ((fl-CF (lambda () 0)))
+               `(let* ((fl-CF (lambda () 0))
+                       (fl-undef (lambda () (fxand (fl-undef) ,(fxnot flag-CF)))))
                   ,(continue #t ip))))
              ((#xF9)                    ; stc
               (emit
-               `(let* ((fl-CF (lambda () ,flag-CF)))
+               `(let* ((fl-CF (lambda () ,flag-CF))
+                       (fl-undef (lambda () (fxand (fl-undef) ,(fxnot flag-CF)))))
                   ,(continue #t ip))))
              ((#xFA)                    ; cli
               (emit
