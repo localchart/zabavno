@@ -1683,7 +1683,9 @@
       ((SHL)                            ;same as SAL
        `((t0 ,t0)
          (t1 ,(cgand t1 #b00011111))
-         (tmp ,(cgasl 't0 't1))
+         (tmp (if (fx<? t1 ,eos)
+                  ,(cgasl 't0 't1)
+                  0))
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
                                  ;; undefined if t1 > 1
@@ -1697,7 +1699,7 @@
          (fl-AF (lambda () (if (eqv? t1 0) (fl-AF) ,flag-AF))) ;undefined
          (fl-PF (lambda () (if (eqv? t1 0) (fl-PF) ,(cg-PF result))))
          (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
-                               (if (and (< t1 ,eos)
+                               (if (and (fx<? t1 ,eos)
                                         ,(cgbit-set? 't0 (cg- eos 't1)))
                                    ,flag-CF
                                    0))))
@@ -1705,7 +1707,10 @@
                      (case t1
                        ((0) (fl-undef))
                        ((1) ,flag-AF)
-                       (else ,(fxior flag-OF flag-AF)))))))
+                       (else
+                        (if (fx>=? t1 ,eos)
+                            ,(fxior flag-OF flag-AF flag-CF)
+                            ,(fxior flag-OF flag-AF))))))))
 
       ((SHR)
        `((t0 ,t0)
@@ -1729,7 +1734,10 @@
                      (case t1
                        ((0) (fl-undef))
                        ((1) ,flag-AF)
-                       (else ,(fxior flag-OF flag-AF)))))))
+                       (else
+                        (if (fx>=? t1 ,eos)
+                            ,(fxior flag-OF flag-AF flag-CF)
+                            ,(fxior flag-OF flag-AF))))))))
 
       ((SHRD)
        `((t0 ,t0)
