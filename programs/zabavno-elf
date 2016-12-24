@@ -1,0 +1,83 @@
+#!/usr/bin/env scheme-script
+;; -*- mode: scheme; coding: utf-8 -*- !#
+;; PC emulator in Scheme
+;; Copyright © 2016 Göran Weinholt <goran@weinholt.se>
+
+;; Permission is hereby granted, free of charge, to any person obtaining a
+;; copy of this software and associated documentation files (the "Software"),
+;; to deal in the Software without restriction, including without limitation
+;; the rights to use, copy, modify, merge, publish, distribute, sublicense,
+;; and/or sell copies of the Software, and to permit persons to whom the
+;; Software is furnished to do so, subject to the following conditions:
+
+;; The above copyright notice and this permission notice shall be included in
+;; all copies or substantial portions of the Software.
+
+;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+;; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+;; THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+;; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+;; FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+;; DEALINGS IN THE SOFTWARE.
+#!r6rs
+
+;; Run (Linux i386) ELF binaries.
+
+(import (rnrs (6))
+        (zabavno cpu x86)
+        (zabavno firmware linux)
+        (zabavno loader elf))
+
+(define (main filename program-args enable-debug enable-trace)
+  (let-values (((mach os endianness) (detect-elf-image filename)))
+    (unless (and mach os endianness)
+      (exit 1))
+    (let* ((M (case mach
+                ((i386) (make-machine)))))
+      (with-machine M
+        (lambda ()
+          (machine-debug-set! M enable-debug)
+          (machine-trace-set! M enable-trace)
+          (enable-interrupt-hooks)
+          (case os
+            ((linux)
+             (linux-setup)))
+          (load-elf-image filename)
+          (let lp ()
+            (case (machine-run)
+              ((stop) #f)
+              ((hlt) (lp))          ;wait for external interrupts
+              ((reboot)
+               (main filename program-args enable-debug enable-trace))
+              (else (lp)))))))))
+
+(define (help)
+  (display "The Zabavno machine emulator ELF loader\n\
+Usage: zabavno-elf [--debug] [--trace] <program-image> [<argument> ...]\n\
+The program image must be an ELF image.\n"
+           (current-error-port))
+  (exit 1))
+
+(define (args->string args)
+  (call-with-string-output-port
+    (lambda (p)
+      (for-each (lambda (arg)
+                  (display #\space p)
+                  (display arg p))
+                args))))
+
+;; Handle command line arguments.
+(let lp ((parameters (cdr (command-line)))
+         (enable-debug #f)
+         (enable-trace #f))
+  (cond ((null? parameters)
+         (help))
+        ((equal? (car parameters) "--debug")
+         (lp (cdr parameters) #t enable-trace))
+        ((equal? (car parameters) "--trace")
+         (lp (cdr parameters) enable-debug #t))
+        (else
+         (let ((filename (car parameters))
+               (program-args (args->string (cdr parameters))))
+           (main filename program-args enable-debug enable-trace)))))
