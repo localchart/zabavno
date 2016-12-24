@@ -2422,12 +2422,12 @@
                                    (if (or (fx>? nibble 9) (not (eqv? AF 0)))
                                        (values (,fx^ al #x06) ,flag-AF
                                                ;; CF is set if al now has a carry/borrow.
-                                               (if (fxbit-set? (,fx^ nibble #x06) 4)
+                                               (if (fxbit-set? (,fx^ al #x06) 8)
                                                    ,flag-CF old-CF))
                                        (values al 0 0))))
                                 ((al AF CF) ;adjust the higher nibble
                                  (if (or (fx>? old-al #x99) (not (eqv? old-CF 0)))
-                                     (values (,fx^ al #x60) AF ,flag-CF)
+                                     (values (fxand (,fx^ al #x60) #xFF) AF ,flag-CF)
                                      (values al AF ,(if (eqv? op #x27) 0 'CF)))))
                     (let* (,@(cgl-register-update idx-AX 8 'al)
                            (fl-OF (lambda () 0)) ;undefined
