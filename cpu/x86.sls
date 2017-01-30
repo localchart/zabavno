@@ -1,5 +1,5 @@
 ;; -*- mode: scheme; coding: utf-8 -*-
-;; Copyright © 2014, 2016 Göran Weinholt <goran@weinholt.se>
+;; Copyright © 2014, 2016, 2017 Göran Weinholt <goran@weinholt.se>
 
 ;; Permission is hereby granted, free of charge, to any person obtaining a
 ;; copy of this software and associated documentation files (the "Software"),
@@ -86,6 +86,7 @@
           with-machine
           current-machine
           copy-to-memory copy-from-memory
+          open-memory-input-port
           real-pointer
 
           ;; Flag bits.
@@ -99,7 +100,7 @@
   (define DEFAULT-MEMORY-FILL #xFF)
 
   (define pretty-print
-    (lambda (x) (display x (current-error-port)) (newline (current-error-port))))
+    (lambda (x) (write x (current-error-port)) (newline (current-error-port))))
 
   (define code-env (environment
                     '(except (rnrs (6)) bitwise-rotate-bit-field)
@@ -136,13 +137,12 @@
                          (cons (hexlify-instruction (car x))
                                (hexlify-instruction (cdr x))))
                         (else x)))))
-        (lambda (bv)
-          (call-with-port (open-bytevector-input-port bv)
+        (lambda (scaled-cs ip)
+          (call-with-port (open-memory-input-port "RAM" (fw+ scaled-cs ip) 15)
             (lambda (p)
-              (guard
-                  (exn
-                   (else `(undefined: ,(condition-message exn) ,@(condition-irritants exn))))
-                (hexlify-instruction (get-instruction p 16 #f)))))))))
+              (guard (exn
+                      (else `(undefined: ,(condition-message exn) ,@(condition-irritants exn))))
+                (hexlify-instruction (get-instruction p 16 #f ip)))))))))
 
   ;; Import cp0 for development.
   (define expand/optimize
@@ -244,16 +244,6 @@
 
   (define (current-machine)
     *current-machine*)
-
-  ;; Copy an instruction from memory.
-  (define (copy-inst scaled-cs ip)
-    (do ((ret (make-bytevector 15))
-         (i 0 (fx+ i 1)))
-        ((fx=? i (bytevector-length ret))
-         ret)
-      (bytevector-u8-set! ret i (memory-u8-ref
-                                 (fx+ scaled-cs
-                                      (fxand #xffff (fx+ ip i)))))))
 
   (define (print . x*)
     (for-each (lambda (x) (display x (current-error-port))) x*)
@@ -488,6 +478,22 @@
            ((fx=? i count))
          (memory-u8-set! (fx+ addr i)
                          (bytevector-u8-ref bv (fx+ start i)))))))
+
+  ;; Opens a binary input port that reads from memory at the given address.
+  (define (open-memory-input-port name addr len)
+    (define M (current-machine))
+    (define (read! bv start count)
+      (with-machine M
+        (lambda ()
+          (do ((n (fxmin count len))
+               (addr addr (fw+ addr 1))
+               (i start (fx+ i 1)))
+              ((fx=? i n)
+               (set! addr (fw+ addr n))
+               (set! len (fx- len n))
+               n)
+            (bytevector-u8-set! bv i (memory-u8-ref addr))))))
+    (make-custom-binary-input-port name read! #f #f #f))
 
   ;; Memory size is fixed for now.
   (define memory-size (* 2 1024 1024))
@@ -744,7 +750,7 @@
                    ": "  (hex (memory-u8-ref (real-pointer saved-cs saved-ip)))
                    " " (hex (memory-u8-ref (real-pointer saved-cs (fx+ saved-ip 1)))))
            (if disassemble
-               (print " ...: " (disassemble (copy-inst (fx* saved-cs 16) saved-ip)))
+               (print " ...: " (disassemble (fxasl saved-cs 4) saved-ip))
                (print " ..."))
            'stop)
           ((7)
@@ -1237,13 +1243,6 @@
                          ,flag-AF)
                         (else
                          ,(fxior flag-OF flag-AF)))))))
-
-
-  ;; (print-gensym 'pretty)
-  ;; (expand/optimize
-  ;;  `(let* ((di #x4003)
-  ;;          ,@(cgl-arithmetic-shld 'result 16 'di 'di 2))
-  ;;     (values result fl-CF)))
 
   (define (cgl-arithmetic result result:u eos operator t0 t1)
     ;; TODO: Check the corner cases.
@@ -1954,11 +1953,11 @@
   (define (cg-int-invalid-opcode return merge cs start-ip)
     (when (machine-debug (current-machine))
       (print* "Warning: translating invalid opcode at "
-              (hex (fxarithmetic-shift-right cs 4)) ":" (hex start-ip)
+              (hex (segment-selector cs)) ":" (hex start-ip)
               ": " (number->string (memory-u8-ref (+ cs start-ip)) 16)
               " " (number->string (memory-u8-ref (+ cs (+ start-ip 1))) 16))
       (if disassemble
-          (print " ...: " (disassemble (copy-inst cs start-ip)))
+          (print " ...: " (disassemble cs start-ip))
           (print " ...")))
     (%cg-int 6 #f return merge start-ip)) ;#UD
 
@@ -2153,7 +2152,7 @@
        (define start-ip ip)
        (when (and debug disassemble)
          (print (hex (segment-selector cs) 4) ":" (hex ip 4) "  "
-                (disassemble (copy-inst cs ip))))
+                (disassemble cs ip)))
        (let prefix ((ip ip)
                     (dseg 'ds)       ;segment for address calculations
                     (sseg 'ss)       ;segment for stack references
