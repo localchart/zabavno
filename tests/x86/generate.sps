@@ -1,5 +1,5 @@
 #!/usr/bin/env scheme-script
-;; Copyright © 2016 Göran Weinholt <goran@weinholt.se>
+;; Copyright © 2016, 2017 Göran Weinholt <goran@weinholt.se>
 
 ;; Permission is hereby granted, free of charge, to any person obtaining a
 ;; copy of this software and associated documentation files (the "Software"),
@@ -23,6 +23,7 @@
 ;; Test case generator for Zabavno, based on some ideas from schjig.
 
 (import (rnrs (6))
+        (machine-code assembler x86)
         (machine-code assembler x86)
         (zabavno cpu x86)
         (zabavno tests x86 make-elf))
@@ -448,7 +449,9 @@
 ;; instruction list.
 (display "Writing generate.out...\n")
 (generate-test-image "generate.out"
-                     '((adc Eb Ib)
+                     '((aaa)
+                       (aas)
+                       (adc Eb Ib)
                        (add Eb Ib)
                        (mov Eb Ib)
                        (inc Eb)

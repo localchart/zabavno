@@ -2478,25 +2478,29 @@
              ((#x38 #x39 #x3A #x3B #x3C #x3D)
               (emit (cg-arithmetic-group op 'CMP ip cs dseg sseg eos eas continue)))
              ((#x37 #x3F)               ; aaa, aas
-              (let ((fx^ (if (eqv? op #x37) 'fx+ 'fx-)))
-                (emit
-                 `(let* ((ax ,(cg-register-ref idx-AX 16))
-                         (nibble (fxand ax #xF))
-                         (ah (fxarithmetic-shift-right ax 8))
-                         (adjust (or (fx>? nibble 9) (not (eqv? (fl-AF) 0)))))
-                    (let* ((value (if adjust
-                                      (fxior (fxarithmetic-shift-left (,fx^ ah 1) 8)
-                                             (fxand (,fx^ nibble 6) #xF))
-                                      (fxand ax #xFF0F)))
-                           ,@(cgl-register-update idx-AX 16 'value)
-                           (fl-OF (lambda () 0)) ;undefined
-                           (fl-SF (lambda () 0)) ;undefined
-                           (fl-ZF (lambda () 0)) ;undefined
-                           (fl-AF (lambda () (if adjust ,flag-AF 0)))
-                           (fl-PF (lambda () 0)) ;undefined
-                           (fl-CF (lambda () (if adjust ,flag-CF 0)))
-                           (fl-undef (lambda () ,(fxior flag-OF flag-SF flag-ZF flag-PF))))
-                      ,(continue #t ip))))))
+              (emit
+               `(let* ((ax ,(cg-register-ref idx-AX 16))
+                       (adjust (or (fx>? (fxand ax #xf) 9) (not (eqv? (fl-AF) 0))))
+                       (value
+                        (if adjust
+                            ,(case op
+                               ((#x37) ;aaa
+                                `(fxand (fx+ ax #x106) #xff0f))
+                               (else ;aas
+                                `(let* ((ax (fxand (fx- ax 6) #xffff))
+                                        (ah (fx- (fxarithmetic-shift-right ax 8) 1)))
+                                   (fxior (fxarithmetic-shift-left (fxand ah #xff) 8)
+                                          (fxand ax #xf)))))
+                            (fxand ax #xff0f)))
+                       ,@(cgl-register-update idx-AX 16 'value)
+                       (fl-OF (lambda () 0)) ;undefined
+                       (fl-SF (lambda () 0)) ;undefined
+                       (fl-ZF (lambda () 0)) ;undefined
+                       (fl-AF (lambda () (if adjust ,flag-AF 0)))
+                       (fl-PF (lambda () 0)) ;undefined
+                       (fl-CF (lambda () (if adjust ,flag-CF 0)))
+                       (fl-undef (lambda () ,(fxior flag-OF flag-SF flag-ZF flag-PF))))
+                  ,(continue #t ip))))
              ((#x40 #x41 #x42 #x43 #x44 #x45 #x46 #x47 #x48 #x49 #x4A #x4B #x4C #x4D #x4E #x4F)
               ;; inc/dec *rAX/r8 ... *rDI/r15
               (let* ((regno (fxand op #x7))
