@@ -1739,19 +1739,30 @@
                             ,(fxior flag-OF flag-AF))))))))
 
       ((SHRD)
-       `((t0 ,t0)
-         (t1 ,(cgand t1 #b00011111))
-         (tmp ,(cgasr 't0 't1))
-         (,result ,(cg-trunc 'tmp eos))
-         (fl-OF (lambda () 0))          ;undefined
-         (fl-SF (lambda () ,(cg-SF result eos)))
-         (fl-ZF (lambda () ,(cg-ZF result)))
-         (fl-AF (lambda () 0))          ;undefined
-         (fl-PF (lambda () ,(cg-PF result)))
-         (fl-CF (lambda () (if ,(cgbit-set? 't0 (cg- 't1 1))
-                               ,flag-CF
-                               0)))
-         (fl-undef (lambda () ,(fxior flag-OF flag-AF)))))
+       `((t0 ,t0)                       ;double wide
+         (t1 (bitwise-and ,t1 #b00011111))
+         (tmp (bitwise-arithmetic-shift-right t0 t1))
+         (tmp (if (and (eqv? ,eos 16) (fx>? t1 ,eos))
+                  (bitwise-ior tmp (bitwise-arithmetic-shift-left
+                                    (bitwise-bit-field t0 0 16)
+                                    (fx- 32 t1))) ;technically undefined
+                  tmp))
+         (,result (bitwise-bit-field tmp 0 ,eos))
+         (fl-OF (lambda () (if (eqv? t1 0) (fl-OF) 0))) ;undefined
+         (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result eos))))
+         (fl-ZF (lambda () (if (eqv? t1 0) (fl-ZF) ,(cg-ZF result))))
+         (fl-AF (lambda () (if (eqv? t1 0) (fl-AF) 0))) ;undefined
+         (fl-PF (lambda () (if (eqv? t1 0) (fl-PF) ,(cg-PF result))))
+         (fl-CF (lambda () (if (eqv? t1 0) (fl-CF)
+                               (if (bitwise-bit-set? t0 ,(cg- 't1 1))
+                                   ,flag-CF
+                                   0))))
+         (fl-undef (lambda ()
+                     (cond ((eqv? t1 0) (fl-undef))
+                           ((fx>? t1 ,eos) ;XXX: even result is undefined
+                            ,(fxior flag-CF flag-OF flag-SF flag-ZF flag-AF flag-PF))
+                           (else
+                            ,(fxior flag-OF flag-AF)))))))
 
       ((SUB)
        `((t0 ,t0)

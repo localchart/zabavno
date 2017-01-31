@@ -1,6 +1,6 @@
 #!/usr/bin/env scheme-script
 ;; -*- mode: scheme; coding: utf-8 -*- !#
-;; Copyright © 2014, 2016 Göran Weinholt <goran@weinholt.se>
+;; Copyright © 2014, 2016, 2017 Göran Weinholt <goran@weinholt.se>
 
 ;; Permission is hereby granted, free of charge, to any person obtaining a
 ;; copy of this software and associated documentation files (the "Software"),
@@ -263,80 +263,11 @@
    (mov ax 1)
    (%u8 #x36 #x62 #x46 #x00)) ; (bound ax (mem+ ss bp))
 
- ;; AAA, AAS
- '((xor ax ax) (mov al #x05) (add al #x07) (aaa))
- '((mov ax #x0103) (sub al #x05) (aas))
-
- ;; AAD
- '((mov ax #x0409) (%u8 #xD5 10))
-
  ;; AAM
  '((mov ax #x3902) (%u8 #xD4 10))
  '((mov ax 1) (%u8 #xD4 10))
  '((mov ax 68) (%u8 #xD4 10))
  '((mov al 7) (mov cl 6) (mul cl) (%u8 #xD4 10))
-
- ;; SALC
- '((xor ax ax) (stc) (salc))
- '((xor ax ax) (clc) (salc))
-
- ;; MOVSX
- '((mov ax #x7f) (movsx ax al))
- '((mov ax #x80) (movsx bx al))
- '((mov ax #x80) (movsx bx ax))
-
- ;; BT, BTC, BTR, BTS
- '((stc) (mov ax #x1248) (mov dx 4) (bt ax dx))
- '((stc) (mov ax #x1248) (mov dx 15) (bt ax dx))
- '((stc) (mov ax #x1248) (mov dx 16) (bt ax dx))
- '((stc) (mov ax #x1248) (mov dx 0) (btc ax dx))
- '((stc) (mov ax #x1248) (mov dx 15) (btc ax dx))
- '((stc) (mov ax #x1248) (mov dx 16) (btc ax dx))
- '((stc) (mov ax #x1248) (mov dx 0) (btr ax dx))
- '((stc) (mov ax #x1248) (mov dx 15) (btr ax dx))
- '((stc) (mov ax #x1248) (mov dx 16) (btr ax dx))
- '((stc) (mov ax #x1248) (mov dx 0) (bts ax dx))
- '((stc) (mov ax #x1248) (mov dx 15) (bts ax dx))
- '((stc) (mov ax #x1248) (mov dx 16) (bts ax dx))
-
- '((stc) (mov ax #x1248) (bt ax 4))
- '((stc) (mov ax #x1248) (bt ax 15))
- '((stc) (mov ax #x1248) (bt ax 16))
- '((stc) (mov ax #x1248) (btc ax 0))
- '((stc) (mov ax #x1248) (btc ax 15))
- '((stc) (mov ax #x1248) (btc ax 16))
- '((stc) (mov ax #x1248) (btr ax 0))
- '((stc) (mov ax #x1248) (btr ax 15))
- '((stc) (mov ax #x1248) (btr ax 16))
- '((stc) (mov ax #x1248) (bts ax 0))
- '((stc) (mov ax #x1248) (bts ax 15))
- '((stc) (mov ax #x1248) (bts ax 16))
-
- ;; BSF, BSR
- '((xor ax ax) (mov dx #x1) (bsr ax dx))
- '((xor ax ax) (mov dx #x10) (bsr ax dx))
- '((xor ax ax) (mov dx #xffff) (bsr ax dx))
- '((xor ax ax) (mov dx 0) (bsr ax dx))
- '((xor ax ax) (mov dx #x1) (bsf ax dx))
- '((xor ax ax) (mov dx #x10) (bsf ax dx))
- '((xor ax ax) (mov dx #xffff) (bsf ax dx))
- '((xor ax ax) (mov dx 0) (bsf ax dx))
-
- ;; SHLD.
- '((mov ax #xabcd) (mov dx #x0123) (shld ax dx 4))
- '((mov ax #xabcd) (mov dx #x0123) (mov cl 5) (shld ax dx cl))
-
- ;; SHRD.
- '((mov ax #xabcd) (mov dx #x0123) (shrd ax dx 4))
- '((mov ax #xabcd) (mov dx #x0123) (mov cl 5) (shrd ax dx cl))
-
- ;; SETcc.
- '((mov ax #xabcd) (stc) (setc al))
- '((mov ax #xabcd) (clc) (setc al))
-
- ;; Byte registers
- '((mov al 0) (mov ah 1) (mov bl 2) (mov bh 3)
-   (mov cl 4) (mov ch 5) (mov dl 6) (mov dh 7))
 
  ;; IDIV.
  '((mov ax 13) (cwd) (mov bx 4) (idiv bx))
@@ -362,112 +293,13 @@
    (mov cx 0)
    (%u8 #xf3 #xa6))
 
- ;; DAA, DAS
- '((mov al #x79) (mov bl #x35) (add al bl) (daa))
- '((mov al #x79) (mov bl #x35) (add al bl) (mov al #x2E) (mov bl #x35) (daa))
- '((mov al #x35) (mov bl #x47) (sub al bl) (das))
-
- ;; SAR.
- '((mov al #b10000000)
-   (sar al 1))
- '((mov al #b01111111)
-   (mov cl 2)
-   (sar al cl))
-
- ;; SHR.
- '((mov ax #b0)
-   (shr ax 1))
- '((mov ax #b1)
-   (shr ax 1))
- '((mov ax #b10000000)
-   (shr ax 1))
-
- ;; RCL.
- '((mov al #b10000000)
-   (stc)
-   (rcl al 1))
- '((mov al #b10000000)
-   (clc)
-   (rcl al 1))
- '((mov al #b10001111)
-   (stc)
-   (rcl al 2))
-
- ;; RCR.
- '((mov al #b10000000)
-   (stc)
-   (rcr al 1))
- '((mov al #b10000000)
-   (clc)
-   (rcr al 1))
- '((mov al #b10001111)
-   (stc)
-   (rcr al 2))
-
- ;; ROL.
- '((mov al #b10000000)
-   (rol al 1))
- '((mov al #b10100000)
-   (rol al 2))
-
- ;; ROR.
- '((mov al #b10000000)
-   (ror al 1))
- '((mov al #b00000001)
-   (ror al 1))
- '((mov al #b10000001)
-   (ror al 1))
- '((mov ah #b10000001)
-   (ror ah 2))
-
- ;; NEG.
- '((mov al #b00000001)
-   (neg al))
- `((mov al ,(fxand -127 #xff))
-   (neg al))
- `((mov al 0)
-   (neg al))
-
- ;; NOT.
- '((mov al #b00000000)
-   (not al))
- `((mov al #b11111111)
-   (not al))
-
- ;; SHL.
- '((mov ax #b10000000)
-   (shl ax 1))
- '((mov ax #b11000000)
-   (shl ax 1))
- '((mov ax #b10000000)
-   (mov cl 2)
-   (shl ax cl))
-
- ;; TEST.
- '((mov ax #x0101)
-   (test ax #x0101))
- '((mov al #x10)
-   (test al #x01))
-
  ;; LEA
  ;; '((mov si #x1) (mov bp #x1000) (lea ax (mem+ si bp)))
  ;; '((mov si #x1) (mov bp #x1000) (lea si (mem+ si bp)))
 
- ;; 98, 99. Sign-extension.
- '((mov al #x7f) (cbw))
- '((mov al #x80) (cbw))
- '((mov ax #x7fff) (cwd))
- '((mov ax #x8000) (cwd))
-
  ;; MOV with segment registers
  '((xor ax ax) (mov ax cs))
  '((mov ax #x700) (mov es ax))
-
- ;; MOVZX
- '((mov al #x7f)
-   (movzx ax al))
- '((mov al #x80)
-   (movzx bx al))
 
  ;; PUSH, POP
  '((push #x100) (pop ax))
@@ -478,30 +310,6 @@
  '((xor bx bx) (add bx 1))              ;Ev Iz
  '((xor bx bx) (add ebx 1))             ;Ev Iz
  '((xor bx bx) (add bx -1))             ;Ev IbS
-
- ;; CLC, STC, CMC
- '((clc))
- '((stc))
- '((clc) (cmc))
- '((stc) (cmc))
-
- ;; F6 F7 TEST
- '((mov bx #x1200) (test bh #b10))
- '((mov bx #x1200) (test bh #b01))
-
- ;; F6 F7 MUL
- '((mov ax 6) (mov dx 7) (mul dx))
- '((mov ax 6) (mov dx 7) (mul dl))
- '((mov ax 3) (mul ax))
- '((mov ah 88) (mov al 2) (mul ah))
-
- ;; IMUL
- '((mov ax 6) (xor dx dx) (imul dx ax 7))
- '((mov ax -6) (xor dx dx) (imul dx ax -7))
- '((mov ax -32768) (xor dx dx) (imul dx ax -128))
- '((mov dx 6) (mov ax 7) (imul dx ax))
- '((mov dx 6) (mov ax -7) (cwd) (imul ax))
- '((mov al 6) (mov bl -7) (imul bl))
 
  ;; F6 F7 DIV
  '((mov ax 42) (cwd) (mov cx 6) (div cx))
