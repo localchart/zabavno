@@ -682,7 +682,8 @@
     (case size
       ((8) (vector-ref (machine-I/O (current-machine)) 0))
       ((16) (vector-ref (machine-I/O (current-machine)) 1))
-      ((32) (vector-ref (machine-I/O (current-machine)) 2))))
+      ((32) (vector-ref (machine-I/O (current-machine)) 2))
+      (else (error 'port-table "Invalid size" size))))
 
   (define (port-read port size)
     (let* ((value (cond ((hashtable-ref (port-table size) port #f)
@@ -991,7 +992,8 @@
       ((#b10)
        (with-instruction-immediate-sx* ((disp <- cs ip 32))
          (values ip 'mem (cg+ (vector-ref reg-names register)
-                              (cg+ scale-index-base disp)))))))
+                              (cg+ scale-index-base disp)))))
+      (else (error '%do-addr32-disp "Invalid mod" cs ip mod))))
 
 ;;; Translation: code generation helpers
 
@@ -2239,7 +2241,7 @@
                                       ((LGDT)
                                        `((machine-GDTR-base-set! M base)
                                          (machine-GDTR-limit-set! M limit)))
-                                      ((LIDT)
+                                      (else
                                        `((machine-IDTR-base-set! M base)
                                          (machine-IDTR-limit-set! M limit))))
                                   ,(continue merge ip)))
@@ -2270,7 +2272,7 @@
                           `(let* ((value ,(case (ModR/M-reg modr/m)
                                             ((0) '(machine-CR0 (current-machine)))
                                             ((2) '(machine-CR2 (current-machine)))
-                                            ((3) '(machine-CR3 (current-machine)))))
+                                            (else '(machine-CR3 (current-machine)))))
                                   ,@(cgl-r/m-set store location 32 'value))
                              ,(continue merge ip))
                           (cg-int-invalid-opcode return merge cs start-ip)))))
@@ -2292,7 +2294,7 @@
                                 (cond ((eqv? (machine-CPL M) 0)
                                        ,(case (ModR/M-reg modr/m)
                                           ((2) '(machine-CR2-set! M value))
-                                          ((3) '(machine-CR3-set! M value)))
+                                          (else '(machine-CR3-set! M value)))
                                        ,(continue merge ip))
                                       (else
                                        ,(cg-int-general-protection 0 return merge start-ip
@@ -2380,7 +2382,7 @@
                          (let ((sreg (case op1
                                        ((#xB2) 'ss)
                                        ((#xB4) 'fs)
-                                       ((#xB5) 'gs))))
+                                       (else 'gs))))
                            (emit (cg-load-far-pointer sreg location modr/m eos continue merge ip)))
                          (emit (cg-int-invalid-opcode return merge cs start-ip)))))
                   ((#xB6 #xB7)          ; movzx Gv Eb, movzx Gv Ew
@@ -2407,7 +2409,7 @@
                             ((#xA3) 'BT)
                             ((#xAB) 'BTS)
                             ((#xB3) 'BTR)
-                            ((#xBB) 'BTC))))
+                            (else 'BTC))))
                      (with-r/m-operand ((ip store location modr/m) (cs ip dseg sseg eas))
                        (emit
                         `(let* (,@(cgl-arithmetic 'result '_ eos operator
