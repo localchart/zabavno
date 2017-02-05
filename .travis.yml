@@ -11,10 +11,6 @@ env:
 matrix:
   allow_failures:
     - env: SCHEME="Guile_preinstalled"
-    - env: SCHEME="Larceny"
-    - env: SCHEME="Racket_6.2"
-    - env: SCHEME="Racket_HEAD"
-    - env: SCHEME="SagittariusScheme"
   fast_finish: true
 
 addons:
