@@ -1,10 +1,17 @@
 env:
   matrix:
     - SCHEME="ChezScheme"
-    # - SCHEME="Guile"
-    # - SCHEME="Racket"
-    # - SCHEME="Sagittarius"
+    - SCHEME="Guile"
+    - SCHEME="Racket"
+    - SCHEME="Sagittarius"
     - SCHEME="Vicare"
+
+matrix:
+  allow_failures:
+    - env: SCHEME="Guile"
+    - env: SCHEME="Racket"
+    - env: SCHEME="Sagittarius"
+  fast_finish: true
 
 addons:
   apt:
