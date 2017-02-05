@@ -1,25 +1,34 @@
 env:
   matrix:
-    - SCHEME="ChezScheme"
-    - SCHEME="Guile"
-    - SCHEME="Racket"
-    - SCHEME="Sagittarius"
-    - SCHEME="Vicare"
+    - SCHEME="ChezScheme_master"
+    - SCHEME="Guile_preinstalled"
+    - SCHEME="Larceny"
+    - SCHEME="Racket_6.2"
+    - SCHEME="Racket_HEAD"
+    - SCHEME="SagittariusScheme"
+    - SCHEME="VicareScheme"
 
 matrix:
   allow_failures:
-    - env: SCHEME="Guile"
-    - env: SCHEME="Racket"
-    - env: SCHEME="Sagittarius"
+    - env: SCHEME="Guile_preinstalled"
+    - env: SCHEME="Larceny"
+    - env: SCHEME="Racket_6.2"
+    - env: SCHEME="Racket_HEAD"
+    - env: SCHEME="SagittariusScheme"
   fast_finish: true
 
 addons:
   apt:
     packages:
-      - racket
       - guile-2.0
       # For Vicare
       - libgmp-dev
+      # Sagittarius
+      - libgc-dev
+      - zlib1g-dev
+      - libffi-dev
+      # For Larceny
+      - libc6:i386
 
 language: c
 
@@ -37,8 +46,10 @@ before_script:
   - unzip machine-code-master.zip
   - mkdir -p external && mv machine-code-master external/machine-code
   - export SCHEME_LIBRARY_PATH=$PWD/external
-  # XXX: The build-scheme script should be moved to a different repo.
-  - set -o pipefail && eval "$(external/machine-code/build-scheme.sh $SCHEME)"
+  # Install scheme-ci
+  - wget https://github.com/weinholt/scheme-ci/archive/master.zip -O scheme-ci-master.zip
+  - unzip scheme-ci-master.zip
+  - eval "$(scheme-ci-master/install-scheme.sh $SCHEME)"
 
 script:
   - ./run-tests.sh
