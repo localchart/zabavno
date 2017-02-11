@@ -1049,6 +1049,12 @@
         `(fxmax ,op0 ,op1)
         `(max ,op0 ,op1)))
 
+  (define (cgbit-field n start end)
+    (if (> (fixnum-width) 32)
+        `(let ((mask (fxnot (fxarithmetic-shift-left -1 ,end))))
+           (fxarithmetic-shift-right (fxand ,n mask) ,start))
+        `(bitwise-bit-field ,n ,start ,end)))
+
   (define (cg-reg-ref modr/m eos)
     (cg-register-ref (ModR/M-reg modr/m) eos))
 
@@ -1505,7 +1511,7 @@
        `((t0 ,t0)
          (t1 ,t1)
          (tmp (* t0 t1))
-         (,result ,(cg-trunc 'tmp eos))
+         (,result (bitwise-bit-field tmp 0 ,eos))
          (,result:u ,(cg-trunc `(bitwise-arithmetic-shift-right tmp ,eos) eos))
          ;; CF and OF are set if the result did not fit in lower
          ;; destination.
@@ -1651,7 +1657,7 @@
        `((t0 ,(cg-recover-sign t0 eos))
          (t1 ,(cgand t1 #b00011111))
          (tmp ,(cgasr 't0 't1))
-         (,result tmp)
+         (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))
                                  (else 0)))) ;undefined for t1>1
          (fl-SF (lambda () (if (eqv? t1 0) (fl-SF) ,(cg-SF result eos))))
@@ -1685,7 +1691,7 @@
        `((t0 ,t0)
          (t1 ,(cgand t1 #b00011111))
          (tmp (if (fx<? t1 ,eos)
-                  ,(cgasl 't0 't1)
+                  ,(cgasl (cgbit-field 't0 0 (cg- eos 't1)) 't1)
                   0))
          (,result ,(cg-trunc 'tmp eos))
          (fl-OF (lambda () (cond ((eqv? t1 0) (fl-OF))

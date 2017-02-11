@@ -24,11 +24,17 @@
 
 (import (rnrs (6))
         (machine-code assembler x86)
-        (machine-code assembler x86)
+        (machine-code disassembler x86-opcodes)
         (zabavno cpu x86)
         (zabavno tests x86 make-elf))
 
-(define ignore-undefined-flags? #t)
+(define *IGNORE-UNDEFINED-FLAGS?* #t)
+
+(define *TEST-MNEMONICS*
+  '(aaa aad aas adc add and bsf bsr bt btc btr bts cbw clc cld
+        cmc cwd daa das dec imul inc mov movsx movzx mul neg not rcl
+        rcr rol ror salc sar sbb setc shl shld shr shrd stc std sub
+        test xor))
 
 ;;; Randomness
 
@@ -68,6 +74,9 @@
      (lambda (id mode text data)
        (p id mode text data)))))
 
+(define-condition-type &unsupported-opsyntax &warning
+  make-unsupported-opsyntax unsupported-opsyntax?)
+
 ;; Generate acceptable operands for an instruction opsyntax.
 (define (generate-operands opsyntax*)
   (let lp ((opsyntax* opsyntax*)
@@ -77,6 +86,7 @@
            (reverse ret*))
           (else
            (case (car opsyntax*)
+             ((*unity) (lp (cdr opsyntax*) (cons 1 ret*) operand-size))
              ((*CL) (lp (cdr opsyntax*) (cons 'cl ret*) operand-size))
              ((*AL) (lp (cdr opsyntax*) (cons 'al ret*) operand-size))
              ((*rAX)
@@ -93,6 +103,10 @@
               (case (random 2)
                 ;; TODO: memory
                 (else (lp `(Gb ,@(cdr opsyntax*)) ret* operand-size))))
+             ((Ew)
+              (case (random 2)
+                ;; TODO: memory
+                (else (lp `(Gw ,@(cdr opsyntax*)) ret* operand-size))))
              ((Ev)
               (case (random 2)
                 ;; TODO: memory
@@ -100,6 +114,10 @@
              ((Gb)
               (lp (cdr opsyntax*)
                   (cons (list-ref reg-names8 (random (length reg-names8))) ret*)
+                  operand-size))
+             ((Gw)
+              (lp (cdr opsyntax*)
+                  (cons (list-ref reg-names16 (random (length reg-names16))) ret*)
                   operand-size))
              ((Gv)
               ;; The operand size may have been chosen by a previous
@@ -110,9 +128,7 @@
                                         (else 32)))))
                 (case operand-size
                   ((16)
-                   (lp (cdr opsyntax*)
-                       (cons (list-ref reg-names16 (random (length reg-names16))) ret*)
-                       operand-size))
+                   (lp `(Gw ,@(cdr opsyntax*)) ret* operand-size))
                   (else
                    (lp (cdr opsyntax*)
                        (cons (list-ref reg-names32 (random (length reg-names32))) ret*)
@@ -130,7 +146,9 @@
                     (cons (gen-reg operand-size) ret*)
                     operand-size)))
              (else
-              (error 'gen "Unsupported opsyntax" (car opsyntax*))))))))
+              (raise (condition
+                      (make-unsupported-opsyntax)
+                      (make-irritants-condition (car opsyntax*))))))))))
 
 ;; Generate a register value.
 (define (gen-reg class)
@@ -200,6 +218,7 @@
         ;; Emulate
         (machine-IP-set! M #x1000)
         (machine-CS-set! M #x0000)
+        (machine-debug-set! M #f)
         (machine-run)
 
         ;; Return the result.
@@ -211,10 +230,51 @@
           (ebp . ,(machine-BP M))
           (esi . ,(machine-SI M))
           (edi . ,(machine-DI M))
-          (flags . ,(if ignore-undefined-flags?
+          (flags . ,(if *IGNORE-UNDEFINED-FLAGS?*
                         (fxand (machine-FLAGS M) (fxnot (machine-undefined-flags M)))
                         (machine-FLAGS M)))
           (flags-undef . ,(machine-undefined-flags M)))))))
+
+;;; Test case selection
+
+(define (gather-instructions table keep?)
+  (let f ((instr table))
+    (cond
+      ((not instr) '())
+      ((pair? instr)
+       (case (car instr)
+         ((*prefix*) '())
+         (else
+          (if (keep? instr)
+              (list instr)
+              '()))))
+      (else
+       (case (vector-ref instr 0)
+         ((Group)
+          (letrec ((walk-modr/m-table
+                    (lambda (table)
+                      (apply append
+                             (map
+                              (lambda (i)
+                                (if (and (vector? i) (eqv? (vector-length i) 8))
+                                    (apply append (map f (vector->list i)))
+                                    (f i)))
+                              (vector->list table))))))
+            (append (walk-modr/m-table (vector-ref instr 2))
+                    (if (> (vector-length instr) 3)
+                        (walk-modr/m-table (vector-ref instr 3))
+                        '()))))
+         ((Prefix) (apply append (map f (cdr (vector->list instr)))))
+         ((Datasize) (append (f (vector-ref instr 1)) (f (vector-ref instr 2))))
+         ((Addrsize) (append (f (vector-ref instr 1)) (f (vector-ref instr 2))))
+         ((Mode) (f (vector-ref instr 1)))
+         ((Mem/reg) (append (vector-ref instr 1) (vector-ref instr 2)))
+         (else
+          (if (eqv? (vector-length instr) 256)
+              (apply append (map f (vector->list instr)))
+              '())))))))
+
+;;; Code generation for test cases
 
 (define (cg-testcase-32 testcase text data)
   ;; Generate code for a testcase (for 32-bit test runners).
@@ -243,7 +303,7 @@
                 ;; Compare the flags register
                 (mov esp (+ scratch-flags 4))
                 (pushfd)
-                ,@(if ignore-undefined-flags?
+                ,@(if *IGNORE-UNDEFINED-FLAGS?*
                       (let ((undef (cdr (assq 'flags-undef expected-result))))
                         `((and (mem32+ esp) ,(fxnot undef))
                           (cmp (mem32+ esp) ,(fxand (fxnot undef) expected-fl))))
@@ -281,7 +341,7 @@
                                          (display (hexlify instr) p)
                                          (newline p))
                                        (testcase-text testcase))
-                             (when ignore-undefined-flags?
+                             (when *IGNORE-UNDEFINED-FLAGS?*
                                (display "Undefined flags have been cleared: #x" p)
                                (display (number->string (cdr (assq 'flags-undef expected-result)) 16) p)
                                (newline p))
@@ -291,6 +351,9 @@
                                            (write (car reg) p)
                                            (display "\t#x" p)
                                            (let ((str (number->string (cdr reg) 16)))
+                                             (when (> (string-length str) 8)
+                                               (error 'cg-testcase-32 "Bad register value"
+                                                      str expected-result))
                                              (display (make-string (- 8 (string-length str)) #\0) p)
                                              (display str p))
                                            (newline p)))
@@ -380,7 +443,11 @@
 
 (define lib-data
   `((%label greeting)
-    (%utf8z "Zabavno x86 test suite\nExit status 0 means success.\n\n")
+    (%utf8z "Zabavno x86 test suite\n\
+Exit status:\n\
+ 0 - success\n\
+ 1 - a failed test case\n\
+ 2 - test case could not be emulated (see generate.sps output)\n\n")
     (%label greeting-end)
     (%label hex-digits)
     (%utf8z "0123456789ABCDEF")
@@ -415,13 +482,18 @@
                  (display "Test case can not be emulated: " (current-error-port))
                  (display (car testcase*) (current-error-port))
                  (newline (current-error-port))
+                 (cond ((who-condition? con)
+                        (write (condition-who con) (current-error-port))
+                        (newline (current-error-port))))
                  (cond ((message-condition? con)
                         (write (condition-message con) (current-error-port))
                         (newline (current-error-port))))
                  (cond ((irritants-condition? con)
                         (write (condition-irritants con) (current-error-port))
                         (newline (current-error-port))))
-                 (lp (cdr testcase*) text data)))
+                 (lp (cdr testcase*)
+                     `((mov (mem32+ exit-status) 2)
+                       ,@text) data)))
           (let-values (((text^ data^) (cg-testcase-32 (car testcase*) text data)))
             (lp (cdr testcase*) text^ data^))))))
 
@@ -442,77 +514,29 @@
            (display "Generating code for ")
            (display (car instruction*))
            (newline)
-           (let-values (((text data) (cg-testcases (generate-testcases (car instruction*) 32 100) text data)))
+           (let-values (((text data) (cg-testcases (generate-testcases (car instruction*) 32 100)
+                                                   text data)))
              (lp text data (cdr instruction*)))))))
 
-;; TODO: Use (machine-code disassembler x86-opcodes) to generate the
-;; instruction list.
-(display "Writing generate.out...\n")
-(generate-test-image "generate.out"
-                     '((aaa)
-                       (aas)
-                       (adc Eb Ib)
-                       (add Eb Ib)
-                       (add Ev Iz)
-                       (mov Eb Ib)
-                       (inc Eb)
-                       (dec Eb)
-                       (neg Eb)
-                       (not Eb)
-                       (sbb Eb Ib)
-                       (sub Eb Ib)
-                       (xor Eb Ib)
-                       (salc)
-                       (cld)
-                       (std)
-                       (cmc)
-                       (stc)
-                       (clc)
-                       (setc Eb)
-                       (test Eb Ib)
-                       (test *AL Ib)
-                       (test *rAX Iz)
-                       (cbw)
-                       (cwd)
-                       (movsx Gv Eb)
-                       (movzx Gv Eb)
-                       (mov Eb Gb)
-                       (mov Ev Gv)
-                       (mov Gb Eb)
-                       (mov Gv Ev)
-                       (daa)
-                       (das)
-                       (xor Eb Ib)
-                       (mul Eb)
-                       (aad Ib)
-                       (and Eb Gb)
-                       (and Ev Gv)
-                       (bsf Gv Ev)
-                       (bsr Gv Ev)
-                       (bt Ev Gv)
-                       (bt Ev Ib)
-                       (bts Ev Ib)
-                       (btr Ev Ib)
-                       (btc Ev Ib)
-                       (btc Ev Gv)
-                       (imul Gv Ev Iz)
-                       (imul Gv Ev)
-                       (imul Eb)
-                       (rol Eb Ib)
-                       (rcl Eb Ib)
-                       (ror Eb Ib)
-                       (rcr Eb Ib)
-                       (shl Eb Ib)
-                       (shr Eb Ib)
-                       (sar Eb Ib)
-                       (rol Eb *CL)
-                       (rcl Eb *CL)
-                       (ror Eb *CL)
-                       (rcr Eb *CL)
-                       (shl Eb *CL)
-                       (shr Eb *CL)
-                       (sar Eb *CL)
-                       (shld Ev Gv Ib)
-                       (shld Ev Gv *CL)
-                       (shrd Ev Gv Ib)
-                       (shrd Ev Gv *CL)))
+;;; Main program
+
+(define (main filename)
+  (let ((instructions
+         (gather-instructions opcodes
+                              (lambda (instr)
+                                (and (memq (car instr) *TEST-MNEMONICS*)
+                                     (guard (exn
+                                             ((unsupported-opsyntax? exn)
+                                              (display "Unsupported opsyntax ")
+                                              (write (condition-irritants exn))
+                                              (display " in instruction ")
+                                              (write instr)
+                                              (newline)
+                                              #f))
+                                       (generate-operands (cdr instr))))))))
+    (display "Writing ")
+    (display filename)
+    (newline)
+    (generate-test-image filename instructions)))
+
+(main "generate.out")
