@@ -31,19 +31,21 @@ everything else.
 
 ## Usage
 
-First you need a Scheme. The recommended Scheme for running Zabavno is
-[Chez Scheme](https://github.com/cisco/chezscheme/), although any
-[R6RS Scheme](http://www.r6rs.org/) implementation should work.
+First you need a Scheme. The recommended Scheme for running Zabavno
+is [Chez Scheme](https://github.com/cisco/chezscheme/), although any
+conforming [R6RS Scheme](http://www.r6rs.org/) implementation should
+work. See the build status badge above to find out which Schemes have
+been verified to work.
 
 After having installed a Scheme compiler, clone the repository:
 ```bash
 git clone https://github.com/weinholt/zabavno
 ```
 
-Add the `zabavno` directory to your Scheme library path, e.g.:
+Add the `zabavno` directory to your Scheme library path, i.e.:
 
 ```bash
-export CHEZSCHEMELIBDIRS=$PWD:$CHEZSCHEMELIBDIRS
+export CHEZSCHEMELIBDIRS=/path/to/zabavno/..:$CHEZSCHEMELIBDIRS
 ```
 
 ### Booting disk images
