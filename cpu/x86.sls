@@ -357,14 +357,14 @@
     (define flag*
       '(31 30 29 28 27 26 25 24 23 22 ID VIP VIF AC VM RF
            15 NT IOPL1 IOPL0 OF DF IF TF SF ZF 5 AF 3 PF 1 CF))
-    (do ((m (expt 2 31) (fxarithmetic-shift-right m 1))
+    (do ((m (expt 2 31) (bitwise-arithmetic-shift-right m 1))
          (flag* flag* (cdr flag*)))
-        ((fxzero? m))
+        ((eqv? m 0))
       (cond ((eqv? m 2))
-            ((not (fxzero? (fxand m fl)))
+            ((not (eqv? (bitwise-and m fl) 0))
              (display #\space (current-error-port))
              (display (car flag*) (current-error-port)))
-            ((not (fxzero? (fxand m fl-undef)))
+            ((not (eqv? (bitwise-and m fl-undef) 0))
              (display #\space (current-error-port))
              (display (list (car flag*)) (current-error-port))))))
 
@@ -457,7 +457,7 @@
     (do ((i 0 (fx+ i 1)))
         ((fx=? i len)
          (newline (current-error-port)))
-      (let ((v (memory-u8-ref (fx+ addr i))))
+      (let ((v (memory-u8-ref (fw+ addr i))))
         (display #\space (current-error-port))
         (when (fx<? v #x10)
           (display #\0 (current-error-port)))
@@ -467,7 +467,7 @@
     (do ((ret (make-bytevector len))
          (i 0 (fx+ i 1)))
         ((fx=? i len) ret)
-      (bytevector-u8-set! ret i (memory-u8-ref (fx+ addr i)))))
+      (bytevector-u8-set! ret i (memory-u8-ref (fw+ addr i)))))
 
   (define copy-to-memory
     (case-lambda
@@ -476,7 +476,7 @@
       ((addr bv start count)
        (do ((i 0 (fx+ i 1)))
            ((fx=? i count))
-         (memory-u8-set! (fx+ addr i)
+         (memory-u8-set! (fw+ addr i)
                          (bytevector-u8-ref bv (fx+ start i)))))))
 
   ;; Opens a binary input port that reads from memory at the given address.
@@ -501,26 +501,26 @@
   (define (make-empty-memory)
     (make-vector (/ memory-size page-size) #f))
 
-  (define memory-mask-A20-disabled (fxxor (fx- memory-size 1)
+  (define memory-mask-A20-disabled (fwxor (fw- memory-size 1)
                                           (fxasl 1 20)))
-  (define memory-mask-A20-enabled (fx- memory-size 1))
+  (define memory-mask-A20-enabled (fw- memory-size 1))
   (define memory-mask memory-mask-A20-disabled)
 
   ;; Control the A20 gate.
   (define machine-A20-gate-control
     (case-lambda
       (()
-       (fx=? memory-mask memory-mask-A20-enabled))
+       (eqv? memory-mask memory-mask-A20-enabled))
       ((enable)
        (if enable
            (set! memory-mask memory-mask-A20-enabled)
            (set! memory-mask memory-mask-A20-disabled)))))
 
   (define (RAM-page addr)
-    (fxarithmetic-shift-right (fwand addr memory-mask) page-bits))
+    (fwasr (fwand addr memory-mask) page-bits))
 
   (define (RAM-page-offset addr)
-    (fxand addr (fx- page-size 1)))
+    (fwand addr (fw- page-size 1)))
 
   ;; All accesses to the page at the given address will be handled by
   ;; the procedure. This allows emulating MMIO for hardware. The
@@ -561,7 +561,7 @@
   (define (memory-u16-ref addr)
     (when-uninit-trace
      (unless (and (hashtable-ref %uninit% addr #F)
-                  (hashtable-ref %uninit% (fx+ addr 1) #F))
+                  (hashtable-ref %uninit% (fw+ addr 1) #F))
        (print "Warning: uninitialized memory-u16-ref at " (hex addr))))
     (let ((x (cond ((fxzero? (fxand addr #b1))
                     (cond ((vector-ref RAM (RAM-page addr)) =>
@@ -572,16 +572,16 @@
                           (else (* DEFAULT-MEMORY-FILL #x0101))))
                    (else
                     (fxior (memory-u8-ref addr)
-                           (fxasl (memory-u8-ref (fx+ addr 1)) 8))))))
+                           (fxasl (memory-u8-ref (fw+ addr 1)) 8))))))
       (mtrace "memory-u16-ref: #x" (hex addr) " => #x" (hex x))
       x))
 
   (define (memory-u32-ref addr)
     (when-uninit-trace
      (unless (and (hashtable-ref %uninit% addr #F)
-                  (hashtable-ref %uninit% (fx+ addr 1) #F)
-                  (hashtable-ref %uninit% (fx+ addr 2) #F)
-                  (hashtable-ref %uninit% (fx+ addr 3) #F))
+                  (hashtable-ref %uninit% (fw+ addr 1) #F)
+                  (hashtable-ref %uninit% (fw+ addr 2) #F)
+                  (hashtable-ref %uninit% (fw+ addr 3) #F))
        (print "Warning: uninitialized memory-u32-ref at " (hex addr))))
     (let ((x (cond ((fxzero? (fxand addr #b11))
                     (cond ((vector-ref RAM (RAM-page addr)) =>
@@ -592,9 +592,9 @@
                           (else (* DEFAULT-MEMORY-FILL #x01010101))))
                    (else
                     (fwior (memory-u8-ref addr)
-                           (fxasl (memory-u8-ref (fx+ addr 1)) 8)
-                           (fwasl (memory-u8-ref (fx+ addr 2)) 16)
-                           (fwasl (memory-u8-ref (fx+ addr 3)) 24))))))
+                           (fxasl (memory-u8-ref (fw+ addr 1)) 8)
+                           (fwasl (memory-u8-ref (fw+ addr 2)) 16)
+                           (fwasl (memory-u8-ref (fw+ addr 3)) 24))))))
       (mtrace "memory-u32-ref: #x" (hex addr) " => #x" (hex x))
       x))
 
@@ -626,9 +626,9 @@
   (define (memory-u16-set! addr value)
     (when-uninit-trace
      (hashtable-set! %uninit% addr #t)
-     (hashtable-set! %uninit% (fx+ addr 1) #t))
+     (hashtable-set! %uninit% (fw+ addr 1) #t))
     (mtrace "memory-u16-set!: #x" (hex addr) " #x" (hex value))
-    (cond ((fxzero? (fxand addr #b1))
+    (cond ((fxzero? (fwand addr #b1))
            (cond ((vector-ref RAM (RAM-page addr)) =>
                   (lambda (page)
                     (invalidate-translation addr)
@@ -642,16 +642,16 @@
                     (bytevector-u16le-set! page (RAM-page-offset addr) value)))))
           (else
            (memory-u8-set! addr (fxand value #xff))
-           (memory-u8-set! (fx+ addr 1) (fxasr value 8)))))
+           (memory-u8-set! (fw+ addr 1) (fxasr value 8)))))
 
   (define (memory-u32-set! addr value)
     (when-uninit-trace
      (hashtable-set! %uninit% addr #t)
-     (hashtable-set! %uninit% (fx+ addr 1) #t)
-     (hashtable-set! %uninit% (fx+ addr 2) #t)
-     (hashtable-set! %uninit% (fx+ addr 3) #t))
+     (hashtable-set! %uninit% (fw+ addr 1) #t)
+     (hashtable-set! %uninit% (fw+ addr 2) #t)
+     (hashtable-set! %uninit% (fw+ addr 3) #t))
     (mtrace "memory-u32-set!: #x" (hex addr) " #x" (hex value))
-    (cond ((fxzero? (fxand addr #b11))
+    (cond ((fxzero? (fwand addr #b11))
            (cond ((vector-ref RAM (RAM-page addr)) =>
                   (lambda (page)
                     (invalidate-translation addr)
@@ -665,9 +665,9 @@
                     (bytevector-u32le-set! page (RAM-page-offset addr) value)))))
           (else
            (memory-u8-set! addr (fwand value #xff))
-           (memory-u8-set! (fx+ addr 1) (fwand (fwasr value 8) #xff))
-           (memory-u8-set! (fx+ addr 2) (fxand (fwasr value 16) #xff))
-           (memory-u8-set! (fx+ addr 3) (fwasr value 24)))))
+           (memory-u8-set! (fw+ addr 1) (fwand (fwasr value 8) #xff))
+           (memory-u8-set! (fw+ addr 2) (fxand (fwasr value 16) #xff))
+           (memory-u8-set! (fw+ addr 3) (fwasr value 24)))))
 
 ;;; I/O
 
@@ -749,7 +749,7 @@
            (print* "Error: invalid opcode at "
                    (hex saved-cs) ":" (hex saved-ip)
                    ": "  (hex (memory-u8-ref (real-pointer saved-cs saved-ip)))
-                   " " (hex (memory-u8-ref (real-pointer saved-cs (fx+ saved-ip 1)))))
+                   " " (hex (memory-u8-ref (real-pointer saved-cs (fw+ saved-ip 1)))))
            (if disassemble
                (print " ...: " (disassemble (fxasl saved-cs 4) saved-ip))
                (print " ..."))
@@ -852,13 +852,13 @@
         ((_ ((word <- cs ip eos) (word* <- cs* ip* eos*) ...) body ...)
          #'(let ((word
                   (case eos
-                    ((16) (memory-u16-ref (fx+ cs ip)))
-                    ((8) (memory-u8-ref (fx+ cs ip)))
-                    (else (memory-u32-ref (fx+ cs ip)))))
+                    ((16) (memory-u16-ref (fw+ cs ip)))
+                    ((8) (memory-u8-ref (fw+ cs ip)))
+                    (else (memory-u32-ref (fw+ cs ip)))))
                  (ip (case eos
-                       ((16) (fx+ ip 2))
-                       ((8) (fx+ ip 1))
-                       (else (fx+ ip 4)))))
+                       ((16) (fw+ ip 2))
+                       ((8) (fw+ ip 1))
+                       (else (fw+ ip 4)))))
              (with-instruction-immediate* ((word* <- cs* ip* eos*) ...)
                body ...)))
         ((_ () body ...)
@@ -870,13 +870,13 @@
         ((_ ((word <- cs ip eos) (word* <- cs* ip* eos*) ...) body ...)
          #'(let ((word
                   (case eos
-                    ((16) (memory-s16-ref (fx+ cs ip)))
-                    ((8) (memory-s8-ref (fx+ cs ip)))
-                    (else (memory-s32-ref (fx+ cs ip)))))
+                    ((16) (memory-s16-ref (fw+ cs ip)))
+                    ((8) (memory-s8-ref (fw+ cs ip)))
+                    (else (memory-s32-ref (fw+ cs ip)))))
                  (ip (case eos
-                       ((16) (fx+ ip 2))
-                       ((8) (fx+ ip 1))
-                       (else (fx+ ip 4)))))
+                       ((16) (fw+ ip 2))
+                       ((8) (fw+ ip 1))
+                       (else (fw+ ip 4)))))
              (with-instruction-immediate-sx* ((word* <- cs* ip* eos*) ...)
                body ...)))
         ((_ () body ...)
@@ -3238,7 +3238,7 @@
   (define (translation-line-number address)
     ;; A cached translation is invalidated if a write is performed in
     ;; the same aligned 128-byte line as an existing translation.
-    (fxarithmetic-shift-right address 7))
+    (fwasr address 7))
 
   (define (generate-translation! cs ip debug instruction-limit)
     (let ((trans (generate-translation cs ip debug instruction-limit)))
@@ -3310,11 +3310,11 @@
             (print-flags fl fl-undef)
             (newline (current-error-port))
             (print* "SS:SP: ")
-            (print-memory (fx+ ss SP) 16)
+            (print-memory (fw+ ss SP) 16)
             ;; (print* "@SS:BP: ")
             ;; (display-memory (fx+ ss BP) 16)
             (print* "CS:IP: ")
-            (print-memory (fx+ cs ip) 16))
+            (print-memory (fw+ cs ip) 16))
           ;; Translate instruction(s) or get an existing translation.
           (let ((trans (translate cs ip debug instruction-limit)))
             ;; Call the translation and get new values for the
@@ -3335,9 +3335,8 @@
     (define M *current-machine*)
     (define debug (machine-debug M))
     (define trace (machine-trace M))
-    (let ((fl (fxand (fxior (machine-FLAGS M)
-                            flags-always-set)
-                     (fxnot flags-never-set)))
+    (let ((fl (fwand (fxior (machine-FLAGS M) flags-always-set)
+                     (fwnot flags-never-set)))
           (fl-undef (machine-undefined-flags M))
           (ip (machine-IP M))
           (cs (fxasl (machine-CS M) 4))
@@ -3379,7 +3378,7 @@
         (machine-undefined-flags-set! M fl-undef^)
         (case abort-cause
           ((HLT)
-           (cond ((and (eqv? cs^ #xF0000) (fx<=? ip^ #xFF))
+           (cond ((and (eqv? cs^ #xF0000) (<= ip^ #xFF))
                   ;; Default real-mode interrupt handlers. See
                   ;; enable-interrupt-hooks. TODO: It would be better
                   ;; to not hardcode this.
@@ -3400,4 +3399,11 @@
                   'stop)
                  (else 'hlt)))
           (else
-           (error 'machine-run "Internal error: unknown abort cause" abort-cause)))))))
+           (error 'machine-run "Internal error: unknown abort cause" abort-cause))))))
+
+  ;; Bug workaround for Larceny.
+  (guard (exn
+          ((syntax-violation? exn)
+           (display "Used the bug workaround for Larceny at the bottom om (zabavno cpu x86)\n"
+                    (current-error-port))))
+    (eval 'bitwise-arithmetic-shift-left code-env)))

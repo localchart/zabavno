@@ -10,6 +10,8 @@ env:
     - SCHEME="VicareScheme"
 
 matrix:
+  allow_failures:
+    - env: SCHEME="Larceny"
   fast_finish: true
 
 addons:

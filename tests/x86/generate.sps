@@ -31,10 +31,45 @@
 (define *IGNORE-UNDEFINED-FLAGS?* #t)
 
 (define *TEST-MNEMONICS*
-  '(aaa aad aas adc add and bsf bsr bt btc btr bts cbw clc cld
-        cmc cwd daa das dec imul inc mov movsx movzx mul neg not rcl
-        rcr rol ror salc sar sbb setc shl shld shr shrd stc std sub
-        test xor))
+  '(aaa aad
+    ;; aam
+    aas adc add and
+    ;; arpl bound
+    bsf bsr bt bts btr btc
+    ;; call
+    cbw clc cld
+    ;; cli
+    ;; clts
+    cmc cmp
+    ;; cmps
+    cwd daa das dec
+    ;; div enter hlt idiv
+    imul
+    ;; in
+    inc
+    ;; ins int into iret jcc jcxz jmp
+    lahf
+    ;; lar lds les lss lfs lgs
+    lea
+    ;; leave lgdt lidt lldt lmsw lods loop loope/loopne lsl ltr
+    mov
+    ;; mov dr, cr; movs
+    movsx movzx mul neg not or
+    ;; out outs; pop/popa popf push pusha pushf
+    rcl rcr
+    ;; rep repe repne ret
+    rol ror sahf salc sar shl shr sbb
+    ;; scas
+    seto setno setb setnb setz setnz setbe setnbe
+    sets setns setp setnp setl setnl setle setnle
+    ;; sgdt sidt sldt smsw
+    shld shrd stc std
+    ;; sti stos str
+    sub test
+    ;; verr verrw wait
+    xchg
+    ;; xlat
+    xor))
 
 ;;; Randomness
 

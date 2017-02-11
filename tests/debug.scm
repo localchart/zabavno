@@ -24,6 +24,8 @@
 ;; This program is written for GNU Guile. Tested with GNU Guile 2.0.11
 ;; and DOSEMU 1.4.0.8.
 
+;;; XXX: This tool is obsolete.
+
 (import (zabavno cpu x86)
         (weinholt assembler x86)
         (rnrs))

@@ -14,7 +14,7 @@ programs/zabavno-dos
 case $(uname -m) in
     x86_64|i386)
         case "$SCHEME" in
-            ChezScheme)
+            ChezScheme|Larceny)
                 tests/x86/generate.sps && chmod +x generate.out
                 ./generate.out
                 ;;
