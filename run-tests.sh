@@ -18,8 +18,5 @@ case $(uname -m) in
                 tests/x86/generate.sps && chmod +x generate.out
                 ./generate.out
                 ;;
-            VicareScheme)
-                vicare --r6rs-script tests/vicare.sps
-                ;;
         esac
 esac
