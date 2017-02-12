@@ -1,4 +1,5 @@
 #!/usr/bin/env scheme-script
+;; -*- mode: scheme; coding: utf-8 -*- !#
 ;; Copyright © 2017 Göran Weinholt <goran@weinholt.se>
 
 ;; Permission is hereby granted, free of charge, to any person obtaining a
