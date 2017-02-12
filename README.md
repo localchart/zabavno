@@ -2,32 +2,31 @@
 
 [![Build Status](https://travis-ci.org/weinholt/zabavno.svg?branch=master)](https://travis-ci.org/weinholt/zabavno)
 
-Zabavno is an emulator for the x86 instruction set architecture. The
-idea is to emulate an Intel 80386 in real-address mode, by translating
-machine code to Scheme code and eval'ing it.
+Zabavno is an emulator for the x86 instruction set architecture. It
+emulates an Intel 80386 in real-address mode by translating machine
+code into Scheme and eval'ing it. The translations are cached, which
+makes it reasonably snippy.
 
 Zabavno is licensed under the MIT license. See LICENSE.TXT for
 defails.
 
 ## Why?
 
-The author needed an 80386 real-mode emulator in another project and
-decided to make a separate project for it. The name means funny or
-interesting.
+Originally the author needed an 80386 real-mode emulator in another
+project and decided to make a separate project for it. The name means
+funny or interesting.
 
 ## Current status
 
 The emulator can load simple DOS programs and start FreeDOS and MS-DOS
-from boot floppies. This is done by emulating just the CPU and with a
-pseudo BIOS written in Scheme. Programs run responsively but not
-blazingly fast, it's more like on a genuine 80386.
+from boot floppies. This is done by emulating just the CPU in
+combination with a pseudo BIOS written in Scheme. Programs run
+responsively but not blazingly fast, it's more like on a genuine
+80386.
 
-Protected mode is not a priority right now but should eventually be
-added. Full PC or DOS emulation is also not really a priority, except
-as a way to get more software running for testing. However, patches
-that improve PC and DOS emulation are very welcome. The (zabavno x86)
-library should be kept purely to emulating the CPU, with hooks for
-everything else.
+The major missing features are protected mode, 80387 emulation, and
+any sort of hardware interfaces at all (existing features are
+supported by BIOS calls).
 
 ## Usage
 
@@ -52,7 +51,7 @@ export CHEZSCHEMELIBDIRS=/path/to/zabavno/..:$CHEZSCHEMELIBDIRS
 
 The program for machine emulation is `programs/zabavno`.
 
-Boot floppies are run like this:
+Boot floppies can be run like this:
 ```bash
 programs/zabavno -fda fdboot.img 2>/dev/null
 ```
@@ -60,10 +59,14 @@ programs/zabavno -fda fdboot.img 2>/dev/null
 If you don't already have something to test with, you might like to
 try the [FreeDOS 1.0 floppy](http://www.freedos.org/download/).
 
+There is support for 32MB hard drives. They can be given on the
+command line using the `-hda` flag. The last disk specified becomes
+the boot disk.
+
 (There will be some printouts on stderr about missing BIOS calls and so
 on, so you might want to redirect them to `/dev/null`).
 
-### Running DOS program
+### Running DOS programs
 
 Some DOS programs can be run directly using the DOS emulation library.
 
@@ -72,24 +75,9 @@ Arguments to DOS programs are passed on the command line:
 programs/zabavno-dos PKUNZJR.COM -o test.zip
 ```
 
-## Future plans
-
-One possibility is to add emulated hardware and use the Bochs BIOS.
-Right now all BIOS calls are handled in Scheme code by (zabavno
-firmware bios). If hardware is emulated instead then an existing BIOS
-can be used instead, and it will be possible to run programs that
-interact directly with the hardware. However it should still be
-possible to run with the Zabavno BIOS, since for some applications it
-will not be reasonable to keep around hardware emulation and the Bochs
-BIOS.
-
-The Zabavno BIOS can be improved with support for additional calls,
-including setting video modes and improved keyboard support.
-
-Modularity is a big concern when developing this library. Hard
-dependencies on anything outside of the core R6RS libraries should be
-kept as modular as possible, to make it easier to embed the emulator
-in an existing application.
+The DOS emulation is quite incomplete. If it doesn't work then
+consider starting the program under FreeDOS, or implement the missing
+DOS calls.
 
 ## Screenshots
 
